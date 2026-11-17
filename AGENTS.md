@@ -11,12 +11,14 @@
 - 구현 완료를 주장하기 전에 실제 실행 및 테스트 결과를 확인합니다.
 - 커밋은 한글 Conventional Commits 형식을 사용합니다.
 - push, PR, 배포는 사용자의 명시적 요청이 있을 때 수행합니다.
+- 다른 에이전트와 작업을 공유할 때는 `.agents/README.md`의 시작·인수인계 절차를 따릅니다. 같은 파일의 동시 편집과 타인의 미커밋 변경 덮어쓰기를 피합니다.
 
 ## 문서
 
 - 제품 범위와 결정: docs/product-plan.md
 - 저장 및 동기화: docs/storage-design.md
 - 검증 기준: docs/validation.md
+- 에이전트 공용 작업 공간: .agents/README.md
 
 ## Notion
 

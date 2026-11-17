@@ -20,6 +20,7 @@ python3 -m unittest discover -s tests -v
 - [제품 계획](docs/product-plan.md)
 - [저장 및 동기화 설계](docs/storage-design.md)
 - [검증 기준](docs/validation.md)
+- [에이전트 공용 작업 공간](.agents/README.md)
 
 ## 데이터 취급
 
