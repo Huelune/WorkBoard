@@ -20,4 +20,14 @@
 
 ## Notion
 
-연결 위치는 프로젝트 문서와 전용 데이터베이스가 실제로 생성·확인된 후 기록합니다.
+프로젝트 문서와 전용 데이터베이스를 실제로 확인한 뒤 아래 위치를 사용합니다.
+
+- 개발 포트폴리오: https://app.notion.com/p/3b1f5e6cf897818d9b4be7a92ed11508
+- 프로젝트 데이터베이스: https://app.notion.com/p/23c44f4364684707837b03ebd3284d27
+- 표준 프로젝트 문서: https://app.notion.com/p/41bf5e6cf897817ab2cafe377f10287b
+- 개발 작업 이력 데이터베이스: https://app.notion.com/p/41bf5e6cf897819eb90ff3dfa0c1e1c3
+- 개발 작업 이력 데이터 소스: collection://41bf5e6c-f897-81f9-a0c9-000bbccc75e2
+- 작업 백로그 데이터베이스: https://app.notion.com/p/41bf5e6cf897810fb8fcd0032c7cc1b4
+- 작업 백로그 데이터 소스: collection://41bf5e6c-f897-816d-bef6-000b45ee59ef
+- 포트폴리오 데이터베이스: https://app.notion.com/p/41bf5e6cf8978167af69ee19a21d2bc6
+- 포트폴리오 데이터 소스: collection://41bf5e6c-f897-8180-8a28-000bf1e84c6b
