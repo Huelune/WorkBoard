@@ -1,0 +1,7 @@
+# 예시 값만 사용합니다. 실제 경로와 민감 정보는 config.local.toml에 둡니다.
+[storage]
+local_db_path = ""
+nas_snapshot_root = ""
+
+[sync]
+poll_interval_seconds = 15
