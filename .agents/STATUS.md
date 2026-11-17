@@ -2,6 +2,7 @@
 
 기준일: 2026-11-17
 기본 브랜치: `main`
+공개 원격 저장소: https://github.com/Huelune/WorkBoard
 
 ## 현재 구현
 
