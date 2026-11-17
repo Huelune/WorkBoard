@@ -18,6 +18,8 @@
 - 제품 범위와 결정: docs/product-plan.md
 - 저장 및 동기화: docs/storage-design.md
 - 검증 기준: docs/validation.md
+- 전체 작업 계획: docs/implementation-plan.md
+- 구성안과 데이터 계약: docs/architecture.md
 - 에이전트 공용 작업 공간: .agents/README.md
 
 ## Notion

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "workboard"
 version = "0.1.0"
-description = "Verification work planning and progress tracking"
+description = "Offline-first desktop board for shared work planning and progress"
 requires-python = ">=3.11"
 
 [project.scripts]
