@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSplitter,
     QStyle,
@@ -22,14 +23,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from workboard.domain import is_overdue
+from workboard.domain import is_overdue, is_web_link
 from workboard.ui.text import attention, detail_html, group_notes, state_label
 
 if TYPE_CHECKING:
     from workboard.ui.main_window import MainWindow
 
 ROLE = Qt.ItemDataRole.UserRole
-COLUMNS = ["담당자 / 할 일", "담당자", "진행", "상태 · 챙길 것", "기한", "분류"]
+COLUMNS = ["담당자 / 할 일", "담당자", "진행", "상태 · 챙길 것", "기한", "외부 참조", "분류"]
+LINK_COLUMN = 5
 PROGRESS_COLUMN = 2
 NOTE_COLUMN = 3
 # (light theme, dark theme) pairs; the app follows the system theme.
@@ -89,8 +91,6 @@ class WorkPage(QWidget):
         self.search.setClearButtonEnabled(True)
         self.progress_button = QPushButton("진행 입력")
         self.add_button = QPushButton("업무 추가")
-        self.due_button = QPushButton("기한 변경")
-        self.cancel_button = QPushButton("배정 취소")
 
         bar = QHBoxLayout()
         if not mine:
@@ -100,14 +100,14 @@ class WorkPage(QWidget):
         bar.addWidget(self.search, 1)
         bar.addWidget(self.progress_button)
         if not mine:
-            for button in (self.add_button, self.due_button, self.cancel_button):
-                bar.addWidget(button)
+            bar.addWidget(self.add_button)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(COLUMNS)
         self.tree.setItemDelegateForColumn(PROGRESS_COLUMN, ProgressDelegate(self.tree))
         self.tree.setUniformRowHeights(True)
         self.tree.setAlternatingRowColors(True)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header = self.tree.header()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -135,12 +135,43 @@ class WorkPage(QWidget):
         self.tree.itemDoubleClicked.connect(lambda *_: self.win.edit_progress(self.current_row()))
         self.progress_button.clicked.connect(lambda: self.win.edit_progress(self.current_row()))
         self.add_button.clicked.connect(self.win.ask_work_item)
-        self.due_button.clicked.connect(lambda: self.win.ask_due_date(self.current_row()))
-        self.cancel_button.clicked.connect(lambda: self.win.ask_cancel(self.current_row()))
+        self.tree.customContextMenuRequested.connect(self._menu)
+        self.tree.itemClicked.connect(self._clicked)
 
     def current_row(self) -> dict | None:
         item = self.tree.currentItem()
         return self.rows.get(item.data(0, ROLE)) if item else None
+
+    def menu_actions(self, row: dict) -> list[tuple[str, bool, object]]:
+        """Right-click choices for one row: label, whether the actor may use it, what it does."""
+        win = self.win
+        editor = win.service.is_editor(win.actor, row["project_id"])
+        return [
+            ("진행 입력", row["assignee_id"] == win.actor, lambda: win.edit_progress(row)),
+            ("기한 변경", editor, lambda: win.ask_due_date(row)),
+            ("배정 취소", editor, lambda: win.ask_cancel(row)),
+            ("업무 삭제", editor, lambda: win.ask_delete(row)),
+            ("외부 링크 열기", is_web_link(row["external_url"]), lambda: win.open_link(row["external_url"])),
+            ("근거 링크 열기", is_web_link(row["evidence_ref"]), lambda: win.open_link(row["evidence_ref"])),
+        ]
+
+    def _menu(self, position) -> None:  # noqa: ANN001
+        item = self.tree.itemAt(position)
+        row = self.rows.get(item.data(0, ROLE)) if item else None
+        if not row:
+            return
+        self.tree.setCurrentItem(item)
+        menu = QMenu(self)
+        for index, (label, enabled, call) in enumerate(self.menu_actions(row)):
+            if index == 4:
+                menu.addSeparator()
+            menu.addAction(label, call).setEnabled(enabled)
+        menu.exec(self.tree.viewport().mapToGlobal(position))
+
+    def _clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        row = self.rows.get(item.data(0, ROLE))
+        if row and column == LINK_COLUMN:
+            self.win.open_link(row["external_url"])
 
     def _visible(self, row: dict) -> bool:
         if self.hide_confirmed.isChecked() and row["review_state"] == "confirmed":
@@ -158,10 +189,7 @@ class WorkPage(QWidget):
         self.group.setItemText(1, f"{window.labels[1]}별")
         self.tree.headerItem().setText(len(COLUMNS) - 1, window.labels[1])
         red, amber, green = (tone(name, self.palette()) for name in ("red", "amber", "green"))
-        editor = bool(project) and window.service.is_editor(window.actor, project)
         self.add_button.setEnabled(bool(project) and window.service.is_member(window.actor, project))
-        for button in (self.due_button, self.cancel_button):
-            button.setEnabled(editor)
         if self.mine:
             rows = window.service.my_assignments(window.actor)
         elif project:
@@ -206,9 +234,16 @@ class WorkPage(QWidget):
                     "",
                     note,
                     row["due_date"] or "",
+                    row["external_ref"] or ("링크" if row["external_url"] else ""),
                     window.names.get(row["category_id"], ""),
                 ]
             )
+            if is_web_link(row["external_url"]):  # clickable: looks like a link, opens on click
+                font = item.font(LINK_COLUMN)
+                font.setUnderline(True)
+                item.setFont(LINK_COLUMN, font)
+                item.setForeground(LINK_COLUMN, self.palette().link())
+                item.setToolTip(LINK_COLUMN, row["external_url"])
             item.setData(0, ROLE, row["assignment_id"])
             item.setData(PROGRESS_COLUMN, ROLE, row["progress"])
             color = {"rejected": red, "pending": amber, "confirmed": green}.get(row["review_state"])

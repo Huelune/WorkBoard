@@ -6,8 +6,8 @@ import sqlite3
 from collections.abc import Callable
 from datetime import date, datetime, timezone
 
-from PySide6.QtCore import QSignalBlocker, Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QSignalBlocker, Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QPushButton,
     QStackedWidget,
@@ -24,16 +23,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from workboard.domain import WorkBoardError
+from workboard.domain import WorkBoardError, is_web_link
 from workboard.services import WorkBoardService
 from workboard.ui.dialogs import ProgressDialog, WorkItemDialog
+from workboard.ui.manage_page import ManagePage
 from workboard.ui.pace_page import PacePage
 from workboard.ui.review_page import ReviewPage
 from workboard.ui.text import DEFAULT_LABELS, error_text
 from workboard.ui.work_page import WorkPage
 
-PAGES = ["업무 목록", "내 업무", "확인 대기", "현황·속도"]
+PAGES = ["업무 목록", "내 업무", "확인 대기", "현황·속도", "관리"]
 REVIEW_INDEX = 2
+MANAGE_INDEX = 4
 
 
 class MainWindow(QMainWindow):
@@ -55,18 +56,6 @@ class MainWindow(QMainWindow):
         self.scope = QComboBox()
         self.category = QComboBox()
         new_project = QPushButton("새 프로젝트")
-        self.manage = QPushButton("관리")
-        menu = QMenu(self.manage)
-        menu.addAction("구성원 추가", self.ask_member)
-        menu.addAction("편집자 추가", lambda: self._ask("편집자 추가", "사용자 ID", self.add_editor))
-        self.scope_action = menu.addAction(
-            "", lambda: self._ask(f"{self.labels[0]} 추가", "이름", self.add_scope)
-        )
-        self.category_action = menu.addAction(
-            "", lambda: self._ask(f"{self.labels[1]} 추가", "이름", self.add_category)
-        )
-        menu.addAction("칸 이름 바꾸기", self.ask_labels)
-        self.manage.setMenu(menu)
         self.warning = QLabel("기록이 변경됨: 앱 밖에서 고친 흔적이 있습니다")
         self.warning.setStyleSheet("color: #e5534b; font-weight: bold;")
         self.sync = QLabel()
@@ -75,7 +64,6 @@ class MainWindow(QMainWindow):
         for widget in (QLabel("프로젝트"), self.project, self.scope_caption, self.scope, self.category_caption, self.category):
             top.addWidget(widget)
         top.addWidget(new_project)
-        top.addWidget(self.manage)
         top.addStretch(1)
         top.addWidget(self.warning)
         top.addWidget(self.sync)
@@ -87,8 +75,10 @@ class MainWindow(QMainWindow):
         self.mine_page = WorkPage(self, mine=True)
         self.review_page = ReviewPage(self)
         self.pace_page = PacePage(self)
+        self.manage_page = ManagePage(self)
+        self.pages = (self.work_page, self.mine_page, self.review_page, self.pace_page, self.manage_page)
         self.stack = QStackedWidget()
-        for page in (self.work_page, self.mine_page, self.review_page, self.pace_page):
+        for page in self.pages:
             self.stack.addWidget(page)
 
         body = QHBoxLayout()
@@ -163,17 +153,14 @@ class MainWindow(QMainWindow):
         self.labels = (record["scope_label"], record["category_label"]) if record else DEFAULT_LABELS
         self.scope_caption.setText(self.labels[0])
         self.category_caption.setText(self.labels[1])
-        self.scope_action.setText(f"{self.labels[0]} 추가")
-        self.category_action.setText(f"{self.labels[1]} 추가")
         members = self.service.list_members(project) if project else []
         self.people = {m["user_id"]: m["display_name"] or m["user_id"] for m in members}
         self._fill(self.scope, scopes, "전체")
         self._fill(self.category, categories, "전체")
-        self.manage.setEnabled(bool(project) and self.service.is_editor(self.actor, project))
         self._reload_pages()
 
     def _reload_pages(self) -> None:
-        for page in (self.work_page, self.mine_page, self.review_page, self.pace_page):
+        for page in self.pages:
             page.reload()
         waiting = self.review_page.count()
         self.nav.item(REVIEW_INDEX).setText(f"확인 대기 ({waiting})" if waiting else "확인 대기")
@@ -242,6 +229,16 @@ class MainWindow(QMainWindow):
     def cancel_assignment(self, assignment_id: str) -> bool:
         return self.act(lambda: self.service.cancel_assignment(self.actor, assignment_id))
 
+    def delete_work_item(self, work_item_id: str) -> bool:
+        return self.act(lambda: self.service.delete_work_item(self.actor, work_item_id))
+
+    def open_link(self, url: str | None) -> bool:
+        """Open a link in the browser. Only http(s): a link can come from someone else's data."""
+        return is_web_link(url) and self._open_url(url)
+
+    def _open_url(self, url: str) -> bool:
+        return QDesktopServices.openUrl(QUrl(url))
+
     def review(self, assignment_id: str, decision: str, reason: str | None = None) -> bool:
         return self.act(lambda: self.service.review_completion(self.actor, assignment_id, decision, reason))
 
@@ -256,9 +253,14 @@ class MainWindow(QMainWindow):
         if not self.project_id:
             return
         project = self.project_id
+        scopes, categories = self.service.list_scopes(project), self.service.list_categories(project)
+        if not scopes or not categories:
+            self.nav.setCurrentRow(MANAGE_INDEX)
+            self.show_error("업무를 추가하려면 먼저 관리 화면에서 두 칸의 항목을 각각 하나 이상 만드세요.")
+            return
         dialog = WorkItemDialog(
-            self.service.list_scopes(project),
-            self.service.list_categories(project),
+            scopes,
+            categories,
             self.service.list_members(project),
             self.actor,
             self.service.is_editor(self.actor, project),
@@ -268,26 +270,23 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.add_work_items(dialog.values())
 
-    def ask_labels(self) -> None:
-        """Let an editor name the two grouping fields in the project's own words."""
-        first, accepted = QInputDialog.getText(
-            self, "칸 이름 바꾸기", "첫째 칸 이름 (예: 코드 버전, 대상 버전)", text=self.labels[0]
-        )
-        if not accepted:
+    def ask_make_editor(self, user_id: str | None) -> None:
+        if not user_id:
             return
-        second, accepted = QInputDialog.getText(
-            self, "칸 이름 바꾸기", "둘째 칸 이름 (예: 검증 분야, 업무 분야)", text=self.labels[1]
+        answer = QMessageBox.question(
+            self, "편집자 지정", "이 구성원을 편집자로 지정할까요? 편집자는 업무 정의와 완료 확인을 할 수 있습니다."
         )
-        if accepted:
-            self.set_labels(first, second)
+        if answer == QMessageBox.StandardButton.Yes:
+            self.add_editor(user_id)
 
-    def ask_member(self) -> None:
-        user_id, accepted = QInputDialog.getText(self, "구성원 추가", "사용자 ID")
-        if not accepted:
+    def ask_delete(self, row: dict | None) -> None:
+        if not row:
             return
-        name, accepted = QInputDialog.getText(self, "구성원 추가", "표시 이름 (비워도 됩니다)")
-        if accepted:
-            self.add_member(user_id, name)
+        answer = QMessageBox.question(
+            self, "업무 삭제", "이 업무를 삭제할까요? 목록과 집계에서 빠지고 화면에서 되돌릴 수 없습니다. 기록은 남습니다."
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.delete_work_item(row["work_item_id"])
 
     def edit_progress(self, row: dict | None) -> None:
         if not row or row["assignee_id"] != self.actor:

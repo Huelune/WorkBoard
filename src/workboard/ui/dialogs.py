@@ -152,8 +152,7 @@ class WorkItemDialog(_FormDialog):
         self.scope = QComboBox()
         self.category = QComboBox()
         for combo, records in ((self.scope, scopes), (self.category, categories)):
-            combo.addItem("없음", None)
-            for record in records:
+            for record in records:  # both are required, so there is no empty choice
                 combo.addItem(record["name"], record["id"])
         self.assignee = QComboBox()
         for member in members:

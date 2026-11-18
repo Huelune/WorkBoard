@@ -24,6 +24,7 @@ from workboard.domain import (
     Status,
     ValidationError,
     WorkItemId,
+    clean_link,
     clean_text,
     history_hash,
     is_overdue,
@@ -237,7 +238,8 @@ class WorkBoardService:
         """Add several work items, each with one assignment, in one transaction.
 
         An editor may assign them to anyone. A member who is not an editor may add work
-        only for themselves; `created_by` keeps that visible. Returns the assignment IDs.
+        only for themselves; `created_by` keeps that visible. Both grouping fields are
+        required. Returns the assignment IDs.
         """
         assignee_id = clean_text(assignee_id, "assignee", required=True)
         due_date = validate_due_date(due_date)
@@ -247,10 +249,12 @@ class WorkBoardService:
             (
                 clean_text(item.get("title"), "title", required=True),
                 clean_text(item.get("external_ref"), "external reference"),
-                clean_text(item.get("external_url"), "external link"),
+                clean_link(item.get("external_url"), "external link"),
             )
             for item in items
         ]
+        if scope_id is None or category_id is None:
+            raise ValidationError("both grouping fields are required for new work")
         with self._write():
             self._get("project", project_id)
             if not self._is_editor(project_id, actor):
@@ -329,7 +333,7 @@ class WorkBoardService:
                 scope_id=scope_id,
                 category_id=category_id,
                 external_ref=clean_text(external_ref, "external reference"),
-                external_url=clean_text(external_url, "external link"),
+                external_url=clean_link(external_url, "external link"),
                 created_by=actor,
             )
 

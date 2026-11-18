@@ -86,19 +86,19 @@ class LabelUiTests(unittest.TestCase):
         return (
             window.scope_caption.text(),
             window.category_caption.text(),
-            window.scope_action.text(),
-            window.category_action.text(),
+            window.manage_page.scope_box.title(),
+            window.manage_page.category_box.title(),
             page.group.itemText(1),
-            page.tree.headerItem().text(5),
+            page.tree.headerItem().text(6),
         )
 
     def test_screen_uses_the_project_labels(self) -> None:
         self.assertEqual(
-            self.shown(), ("대상 버전", "업무 분야", "대상 버전 추가", "업무 분야 추가", "업무 분야별", "업무 분야")
+            self.shown(), ("대상 버전", "업무 분야", "대상 버전", "업무 분야", "업무 분야별", "업무 분야")
         )
         self.assertTrue(self.window.set_labels("코드 버전", "검증 분야"))
         self.assertEqual(
-            self.shown(), ("코드 버전", "검증 분야", "코드 버전 추가", "검증 분야 추가", "검증 분야별", "검증 분야")
+            self.shown(), ("코드 버전", "검증 분야", "코드 버전", "검증 분야", "검증 분야별", "검증 분야")
         )
         page = self.window.work_page
         page.group.setCurrentIndex(2)

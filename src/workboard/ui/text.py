@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime
 from html import escape
 
-from workboard.domain import NotFound, PermissionDenied, ValidationError, is_overdue
+from workboard.domain import NotFound, PermissionDenied, ValidationError, is_overdue, is_web_link
 
 STATUS = {"not_started": "미시작", "in_progress": "진행 중", "on_hold": "보류", "done": "완료"}
 REVIEW = {"pending": "확인 대기", "confirmed": "확인됨", "rejected": "반려됨"}
@@ -51,7 +51,10 @@ def error_text(error: Exception) -> str:
     if isinstance(error, PermissionDenied):
         return "권한이 없습니다. 정의는 프로젝트 편집자가, 진행은 담당자 본인이 바꿉니다."
     if isinstance(error, ValidationError):
-        return "입력을 확인하세요. 완료에는 근거가, 보류와 반려에는 사유가 필요합니다. 기한은 YYYY-MM-DD입니다."
+        return (
+            "입력을 확인하세요. 업무에는 위쪽 두 칸의 항목이 모두 필요하고, 완료에는 근거가, 보류와 반려에는 "
+            "사유가 필요합니다. 기한은 YYYY-MM-DD, 링크는 http:// 또는 https:// 주소입니다."
+        )
     if isinstance(error, NotFound):
         return "대상을 찾을 수 없습니다. 새로 고친 뒤 다시 시도하세요."
     if isinstance(error, sqlite3.Error):
@@ -63,7 +66,7 @@ def _link(reference: str | None) -> str:
     if not reference:
         return "-"
     safe = escape(reference, quote=True)
-    return f'<a href="{safe}">{safe}</a>' if reference.startswith(("http://", "https://")) else safe
+    return f'<a href="{safe}">{safe}</a>' if is_web_link(reference) else safe
 
 
 def detail_html(  # noqa: ANN001

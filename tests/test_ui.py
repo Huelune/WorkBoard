@@ -57,6 +57,7 @@ class UiCase(unittest.TestCase):
         self.project = svc.create_project("ed1", "P1")
         svc.add_editor("ed1", self.project, "ed2")
         self.unit = svc.create_category("ed1", self.project, "UNIT")
+        self.scope = svc.create_scope("ed1", self.project, "v1")
         self.ids = {}
         for name, assignee, due in (
             ("a1", "u1", "2026-01-10"),
@@ -89,12 +90,12 @@ class EmptyWindowTests(UiCase):
     def test_window_opens_on_an_empty_database(self) -> None:
         window = self.window("u1")
         self.assertEqual(window.work_page.tree.topLevelItemCount(), 0)
-        self.assertFalse(window.manage.isEnabled())
+        self.assertFalse(window.manage_page.rename_button.isEnabled())
         self.assertIn("프로젝트를 먼저", window.pace_page.status.text())
         self.assertTrue(window.warning.isHidden())
         self.assertTrue(window.create_project("새 프로젝트"))
         self.assertEqual(window.project.currentText(), "새 프로젝트")
-        self.assertTrue(window.manage.isEnabled())
+        self.assertTrue(window.manage_page.rename_button.isEnabled())
         self.assertFalse(window.create_project("  "))
         self.assertEqual(len(self.errors), 1)
 
@@ -153,7 +154,7 @@ class WorkListTests(UiCase):
     def test_editor_adds_many_and_bad_input_saves_nothing(self) -> None:
         values = {
             "items": parse_work_lines("새 업무 1\n\n새 업무 2\tREF-9\thttps://example.test/9\n"),
-            "scope_id": None,
+            "scope_id": self.scope,
             "category_id": self.unit,
             "assignee_id": "u2",
             "due_date": "2026-13-01",
@@ -176,8 +177,7 @@ class WorkListTests(UiCase):
         self.assertEqual(len(self.kids(self.tops(self.page.tree)[0])), 2)
         member = self.window("u1")
         self.assertTrue(member.work_page.add_button.isEnabled())
-        self.assertFalse(member.work_page.cancel_button.isEnabled())
-        mine = {"items": parse_work_lines("내가 만든 일"), "scope_id": None, "category_id": None, "due_date": None}
+        mine = {"items": parse_work_lines("내가 만든 일"), "scope_id": self.scope, "category_id": self.unit, "due_date": None}
         self.assertFalse(member.add_work_items({**mine, "assignee_id": "u2"}))
         self.assertTrue(member.add_work_items({**mine, "assignee_id": "u1"}))
         self.assertEqual(member.work_page.tree.topLevelItem(0).text(0), "김 담당 · 4건")
@@ -229,8 +229,7 @@ class WorkListTests(UiCase):
 
     def test_non_editor_cannot_manage(self) -> None:
         window = self.window("u1")
-        self.assertFalse(window.manage.isEnabled())
-        self.assertFalse(window.work_page.due_button.isEnabled())
+        self.assertFalse(window.manage_page.rename_button.isEnabled())
         self.assertFalse(window.add_member("u9"))
         self.assertFalse(window.cancel_assignment(self.ids["a5"]))
         self.assertIn("권한이 없습니다", self.errors[-1])

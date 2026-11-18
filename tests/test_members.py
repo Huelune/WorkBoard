@@ -69,6 +69,15 @@ class AddWorkItemsTests(MemberCase):
         super().setUp()
         self.svc.add_member("ed1", self.project, "u1")
         self.category = self.svc.create_category("ed1", self.project, "UNIT")
+        self.scope = self.svc.create_scope("ed1", self.project, "v1")
+        real = self.svc.add_work_items
+
+        def add(actor, project, items, assignee, **extra):  # noqa: ANN001, ANN003, ANN202
+            extra.setdefault("scope_id", self.scope)
+            extra.setdefault("category_id", self.category)
+            return real(actor, project, items, assignee, **extra)
+
+        self.svc.add_work_items = add  # type: ignore[method-assign]
         self.items = [
             {"title": " 함수 A ", "external_ref": "REF-1", "external_url": "https://example.test/1"},
             {"title": "함수 B"},
@@ -109,6 +118,10 @@ class AddWorkItemsTests(MemberCase):
             lambda: self.svc.add_work_items("ed1", self.project, self.items, "u1", category_id=foreign),
             lambda: self.svc.add_work_items("ed1", self.project, [{"title": 5}], "u1"),
             lambda: self.svc.add_work_items("ed1", self.project, "함수", "u1"),
+            lambda: self.svc.add_work_items("ed1", self.project, self.items, "u1", scope_id=None),
+            lambda: self.svc.add_work_items("ed1", self.project, self.items, "u1", category_id=None),
+            lambda: self.svc.add_work_items("ed1", self.project, [{"title": "T", "external_url": "javascript:alert(1)"}], "u1"),
+            lambda: self.svc.add_work_items("ed1", self.project, [{"title": "T", "external_url": "file:///c:/x"}], "u1"),
         )
         for index, attempt in enumerate(attempts):
             with self.subTest(index=index), self.assertRaises(ValidationError):
