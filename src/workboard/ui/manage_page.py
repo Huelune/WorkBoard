@@ -96,12 +96,11 @@ class ManagePage(QWidget):
         self.member_remove = QPushButton("구성원 삭제")
         self.editor_button = QPushButton("편집자로 지정")
         self.editor_remove = QPushButton("편집자 해제")
-        self.password_reset = QPushButton("비밀번호 초기화")
         member_inputs = QHBoxLayout()
         for widget in (self.member_id, self.member_name, self.member_add):
             member_inputs.addWidget(widget)
         member_actions = QHBoxLayout()
-        for widget in (self.editor_button, self.editor_remove, self.member_remove, self.password_reset):
+        for widget in (self.editor_button, self.editor_remove, self.member_remove):
             member_actions.addWidget(widget)
         member_actions.addStretch(1)
         member_layout = QVBoxLayout()
@@ -136,7 +135,6 @@ class ManagePage(QWidget):
         self.editor_button.clicked.connect(lambda: self.win.ask_make_editor(self.selected_member()))
         self.editor_remove.clicked.connect(lambda: self.win.ask_remove_editor(self.selected_member()))
         self.member_remove.clicked.connect(lambda: self.win.ask_remove_member(self.selected_member()))
-        self.password_reset.clicked.connect(lambda: self.win.ask_reset_password(self.selected_member()))
         self.members.itemSelectionChanged.connect(self._member_selected)
 
     @staticmethod
@@ -178,7 +176,6 @@ class ManagePage(QWidget):
         self.editor_button.setEnabled(member is not None and not is_editor)
         self.editor_remove.setEnabled(member is not None and is_editor)
         self.member_remove.setEnabled(member is not None and not is_editor)
-        self.password_reset.setEnabled(member is not None and not is_editor)
 
     def reload(self) -> None:
         window = self.win

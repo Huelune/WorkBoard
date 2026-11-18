@@ -63,6 +63,7 @@ _HASHED = {
 }
 _NOT_STARTED = asdict(ProgressValues(Status.NOT_STARTED.value, 0))
 _WEEK = timedelta(days=7)
+NO_ACCOUNT = "no account with that ID"
 
 
 def _is(row: dict, state: ReviewState) -> bool:
@@ -189,6 +190,9 @@ class WorkBoardService:
 
     # ----- accounts (who is at the keyboard)
     # shortcut: no lockout after repeated wrong passwords, add one if a shared PC makes guessing realistic.
+    # Nobody can set another person's password, editors included: whoever could would be able to log in
+    # as an assignee and write their progress, or take over an account by first adding it as a member.
+    # A forgotten password means a new account. The must_change column is unused and kept for old files.
 
     def has_accounts(self) -> bool:
         return self._repo.account_count() > 0
@@ -200,12 +204,27 @@ class WorkBoardService:
         with self._write():
             if self._repo.get_account(user_id):
                 raise ValidationError("that ID is already taken")
+            # Signing up must not hand over an ID that projects already trust. The one exception is
+            # the very first account on this PC, which claims the data of whoever set the file up.
+            if self._repo.account_count() and self._repo.is_referenced(user_id):
+                raise PermissionDenied("that ID is already used in a project")
             self._repo.insert(
                 "account", user_id=user_id, password_hash=password_hash, must_change=0, created_at=self._now()
             )
 
-    def check_login(self, user_id: str, password: str) -> bool:
-        """Raise PermissionDenied unless the ID and password match. True means the password must be changed.
+    def has_account(self, user_id: str) -> bool:
+        return isinstance(user_id, str) and self._repo.get_account(user_id.strip()) is not None
+
+    def _require_account(self, user_id: str) -> None:
+        """Once accounts exist, a project may only name people who have one (sign up first, then get added).
+
+        Otherwise an editor could park an ID in a project and nobody could ever claim it.
+        """
+        if self._repo.account_count() and not self._repo.get_account(user_id):
+            raise ValidationError(NO_ACCOUNT)
+
+    def check_login(self, user_id: str, password: str) -> None:
+        """Raise PermissionDenied unless the ID and password match.
 
         An unknown ID and a wrong password fail the same way and take the same time.
         """
@@ -213,7 +232,6 @@ class WorkBoardService:
         matches = verify_password(password, account["password_hash"] if account else DUMMY_HASH)
         if not (account and matches):
             raise PermissionDenied("wrong ID or password")
-        return bool(account["must_change"])
 
     def change_password(self, user_id: str, old_password: str, new_password: str) -> None:
         self.check_login(user_id, old_password)
@@ -222,24 +240,7 @@ class WorkBoardService:
             raise ValidationError("the new password must differ from the old one")
         password_hash = hash_password(validate_new_password(user_id, new_password))
         with self._write():
-            self._repo.set_password(user_id, password_hash, must_change=False)
-
-    def reset_password(self, actor: str, project_id: str, user_id: str, new_password: str) -> None:
-        """An editor sets a temporary password for a member who forgot theirs; it must be changed at login.
-
-        Never for another editor: one editor holding two editor accounts could confirm their own work.
-        """
-        user_id = clean_text(user_id, "user", required=True)
-        password_hash = hash_password(validate_new_password(user_id, new_password))
-        with self._write():
-            self._require_editor(actor, project_id)
-            if self._repo.is_editor(project_id, user_id):
-                raise PermissionDenied("an editor's password cannot be reset by someone else")
-            if not self._repo.is_member(project_id, user_id):
-                raise ValidationError("that person is not a member of this project")
-            if not self._repo.get_account(user_id):
-                raise NotFound("account not found")
-            self._repo.set_password(user_id, password_hash, must_change=True)
+            self._repo.set_password(user_id, password_hash)
 
     # ----- definitions (project editors)
 
@@ -262,6 +263,7 @@ class WorkBoardService:
         user_id = clean_text(user_id, "user", required=True)
         with self._write():
             self._require_editor(actor, project_id)
+            self._require_account(user_id)
             self._repo.add_editor(project_id, user_id)
             self._repo.add_member(project_id, user_id)
             self._repo.mark_dirty("definition", project_id, "", self._now())
@@ -326,6 +328,7 @@ class WorkBoardService:
         display_name = clean_text(display_name, "display name")
         with self._write():
             self._require_editor(actor, project_id)
+            self._require_account(user_id)
             self._repo.add_member(project_id, user_id, display_name)
             self._repo.mark_dirty("definition", project_id, "", self._now())
 
@@ -366,6 +369,7 @@ class WorkBoardService:
                     raise PermissionDenied("only project members may add work")
                 if assignee_id != actor:
                     raise PermissionDenied("members may add work only for themselves")
+            self._require_account(assignee_id)
             self._in_project("scope", scope_id, project_id)
             self._in_project("category", category_id, project_id)
             now = self._now()
@@ -457,6 +461,7 @@ class WorkBoardService:
             self._require_editor(actor, item["project_id"])
             if item["deleted"]:
                 raise ValidationError("work item is deleted")
+            self._require_account(assignee_id)
             now = self._now()
             self._repo.insert(
                 "assignment",

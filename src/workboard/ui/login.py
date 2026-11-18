@@ -32,11 +32,9 @@ def _message() -> QLabel:
 
 
 class ChangePasswordDialog(QDialog):
-    """Change one's own password. With `old` given (forced change after a reset) only the new one is asked."""
+    """Change one's own password. The current password is always asked for."""
 
-    def __init__(
-        self, service: WorkBoardService, user_id: str, old: str | None = None, parent: QWidget | None = None
-    ) -> None:
+    def __init__(self, service: WorkBoardService, user_id: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.service, self.user_id = service, user_id
         self.setWindowTitle("비밀번호 변경")
@@ -46,12 +44,7 @@ class ChangePasswordDialog(QDialog):
         save = QPushButton("변경")
         save.setDefault(True)
         form = QFormLayout(self)
-        if old is None:
-            form.addRow("지금 비밀번호", self.old)
-        else:
-            self.old.setText(old)
-            self.old.hide()
-            form.addRow(QLabel("임시 비밀번호로 들어왔습니다. 새 비밀번호를 정해야 계속할 수 있습니다."))
+        form.addRow("지금 비밀번호", self.old)
         form.addRow("새 비밀번호", self.new)
         form.addRow("새 비밀번호 확인", self.confirm)
         form.addRow(self.message)
@@ -119,9 +112,6 @@ class LoginDialog(QDialog):
         self.hint.setText(f"이 PC에서 쓸 계정을 만듭니다. {RULE}" if signup else "ID와 비밀번호를 입력하세요.")
         self.message.clear()
 
-    def run_change(self, dialog: ChangePasswordDialog) -> bool:
-        return dialog.exec() == QDialog.DialogCode.Accepted
-
     def attempt(self) -> bool:
         user_id, password = self.user.text().strip(), self.password.text()
         try:
@@ -130,15 +120,18 @@ class LoginDialog(QDialog):
                     self.message.setText("비밀번호 확인이 다릅니다.")
                     return False
                 self.service.create_account(user_id, password)
-            elif self.service.check_login(user_id, password):
-                if not self.run_change(ChangePasswordDialog(self.service, user_id, password, self)):
-                    return False
+            else:
+                self.service.check_login(user_id, password)
         except ValidationError:
             self.message.setText(f"이미 있는 ID이거나 규칙에 맞지 않습니다. {RULE}")
             return False
         except PermissionDenied:
             self.password.clear()
-            self.message.setText("ID 또는 비밀번호가 맞지 않습니다.")
+            self.message.setText(
+                "이미 프로젝트에서 쓰이는 ID라서 새로 만들 수 없습니다. 다른 ID로 만든 뒤 편집자에게 추가를 요청하세요."
+                if self.signup
+                else "ID 또는 비밀번호가 맞지 않습니다."
+            )
             return False
         self.user_id = user_id
         self.accept()

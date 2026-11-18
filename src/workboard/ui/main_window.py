@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QListWidget,
     QMainWindow,
     QMessageBox,
@@ -228,11 +227,6 @@ class MainWindow(QMainWindow):
     def remove_editor(self, user_id: str) -> bool:
         return self.act(lambda: self.service.remove_editor(self.actor, self.project_id, user_id))
 
-    def reset_password(self, user_id: str, temporary_password: str) -> bool:
-        return self.act(
-            lambda: self.service.reset_password(self.actor, self.project_id, user_id, temporary_password)
-        )
-
     def set_labels(self, scope_label: str, category_label: str) -> bool:
         return self.act(lambda: self.service.set_labels(self.actor, self.project_id, scope_label, category_label))
 
@@ -333,18 +327,6 @@ class MainWindow(QMainWindow):
     def ask_remove_editor(self, user_id: str | None) -> None:
         if user_id and self._confirm("편집자 해제", "이 구성원의 편집자 역할을 해제할까요? 구성원으로는 남습니다."):
             self.remove_editor(user_id)
-
-    def ask_reset_password(self, user_id: str | None) -> None:
-        if not user_id:
-            return
-        temporary, accepted = QInputDialog.getText(
-            self,
-            "비밀번호 초기화",
-            "임시 비밀번호 (8자 이상). 본인에게 따로 알려 주세요. 다음 로그인 때 바꾸게 됩니다.",
-            QLineEdit.EchoMode.Password,
-        )
-        if accepted:
-            self.reset_password(user_id, temporary)
 
     def ask_delete(self, row: dict | None) -> None:
         if not row:

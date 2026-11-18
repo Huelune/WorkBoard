@@ -92,14 +92,25 @@ class Repository:
     def get_account(self, user_id: str) -> dict | None:
         return self.one("SELECT * FROM account WHERE user_id = ?", (user_id,))
 
+    def is_referenced(self, user_id: str) -> bool:
+        """True when any project already names this ID as a member, editor, assignee or author."""
+        places = (
+            ("project_member", "user_id"),
+            ("project_editor", "user_id"),
+            ("assignment", "assignee_id"),
+            ("work_item", "created_by"),
+            ("progress_history", "author_id"),
+            ("completion_review", "reviewer_id"),
+        )
+        return any(
+            self.one(f"SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1", (user_id,)) for table, column in places
+        )
+
     def account_count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM account").fetchone()[0]
 
-    def set_password(self, user_id: str, password_hash: str, must_change: bool) -> None:
-        self._conn.execute(
-            "UPDATE account SET password_hash = ?, must_change = ? WHERE user_id = ?",
-            (password_hash, int(must_change), user_id),
-        )
+    def set_password(self, user_id: str, password_hash: str) -> None:
+        self._conn.execute("UPDATE account SET password_hash = ? WHERE user_id = ?", (password_hash, user_id))
 
     def remove_member(self, project_id: str, user_id: str) -> None:
         self._conn.execute(

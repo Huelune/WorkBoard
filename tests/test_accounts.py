@@ -5,7 +5,7 @@ import sqlite3
 import unittest
 
 from support import Clock, temp_db_path
-from workboard.domain import NotFound, PermissionDenied, ValidationError
+from workboard.domain import PermissionDenied, ValidationError
 from workboard.domain.passwords import hash_password, verify_password
 from workboard.services import WorkBoardService
 from workboard.storage import open_database
@@ -52,8 +52,8 @@ class AccountTests(AccountCase):
         self.assertFalse(self.svc.has_accounts())
         self.svc.create_account(" kim ", GOOD)
         self.assertTrue(self.svc.has_accounts())
-        self.assertFalse(self.svc.check_login("kim", GOOD))
-        self.assertFalse(self.svc.check_login(" kim ", GOOD))
+        self.svc.check_login("kim", GOOD)
+        self.svc.check_login(" kim ", GOOD)
         stored = self.conn.execute("SELECT password_hash FROM account").fetchone()[0]
         self.assertNotIn(GOOD, stored)
 
@@ -81,37 +81,59 @@ class AccountTests(AccountCase):
             with self.subTest(new=new), self.assertRaises(ValidationError):
                 self.svc.change_password("kim", GOOD, new)
         self.svc.change_password("kim", GOOD, OTHER)
-        self.assertFalse(self.svc.check_login("kim", OTHER))
+        self.svc.check_login("kim", OTHER)
         with self.assertRaises(PermissionDenied):
             self.svc.check_login("kim", GOOD)
 
-    def test_editor_resets_a_member_password_and_it_must_be_changed(self) -> None:
+    def test_nobody_can_set_another_persons_password(self) -> None:
+        """Regression: an editor could add anyone as a member and then reset their password."""
+        self.svc.create_account("victim", GOOD)
+        project = self.svc.create_project("attacker", "P")
+        self.svc.add_member("attacker", project, "victim")
+        self.assertFalse(hasattr(self.svc, "reset_password"))
+        with self.assertRaises(PermissionDenied):
+            self.svc.change_password("victim", TEMP, OTHER)  # only the current password opens it
+        self.svc.check_login("victim", GOOD)
+
+    def test_an_id_a_project_already_trusts_cannot_be_claimed_by_signing_up(self) -> None:
+        """Regression: anyone could sign up as an existing editor or member that had no account yet."""
         project = self.svc.create_project("ed1", "P")
-        self.svc.add_editor("ed1", project, "ed2")
         self.svc.add_member("ed1", project, "kim")
-        self.svc.add_member("ed1", project, "no-account")
-        for user_id in ("ed1", "ed2", "kim", "outsider"):
-            self.svc.create_account(user_id, GOOD)
-        refusals = (
-            (PermissionDenied, "kim", "kim"),  # not an editor
-            (PermissionDenied, "ed1", "ed2"),  # never another editor: that would let one editor act as two
-            (PermissionDenied, "ed1", "ed1"),
-            (ValidationError, "ed1", "outsider"),  # not in this project
-            (NotFound, "ed1", "no-account"),
-        )
-        for error, actor, target in refusals:
-            with self.subTest(actor=actor, target=target), self.assertRaises(error):
-                self.svc.reset_password(actor, project, target, TEMP)
-        with self.assertRaises(ValidationError):
-            self.svc.reset_password("ed1", project, "kim", "short")
-        self.assertFalse(self.svc.check_login("kim", GOOD))
+        item = self.svc.create_work_item("ed1", project, "T")
+        self.svc.assign("ed1", item, "lee")
+        self.svc.remove_member("ed1", project, "lee")  # still the assignee of that work
+        self.svc.create_account("ed1", GOOD)  # first account on this PC: the owner of the file claims their ID
+        for taken in ("kim", "lee", " kim "):
+            with self.subTest(taken=taken), self.assertRaises(PermissionDenied):
+                self.svc.create_account(taken, GOOD)
+        self.svc.create_account("park", GOOD)  # an ID no project names is free
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM account").fetchone()[0], 2)
 
-        self.svc.reset_password("ed1", project, "kim", TEMP)
-        with self.assertRaises(PermissionDenied):
-            self.svc.check_login("kim", GOOD)
-        self.assertTrue(self.svc.check_login("kim", TEMP))  # must change
-        self.svc.change_password("kim", TEMP, OTHER)
-        self.assertFalse(self.svc.check_login("kim", OTHER))
+    def test_projects_only_name_people_who_have_an_account(self) -> None:
+        project = self.svc.create_project("ed1", "P")
+        scope = self.svc.create_scope("ed1", project, "v1")
+        category = self.svc.create_category("ed1", project, "C")
+        item = self.svc.create_work_item("ed1", project, "T")
+        self.svc.add_member("ed1", project, "before-accounts")  # nothing to check against yet
+        self.svc.create_account("ed1", GOOD)
+        self.svc.create_account("kim", GOOD)
+        members = len(self.svc.list_members(project))
+        attempts = (
+            lambda: self.svc.add_member("ed1", project, "ghost"),
+            lambda: self.svc.add_editor("ed1", project, "ghost"),
+            lambda: self.svc.assign("ed1", item, "ghost"),
+            lambda: self.svc.add_work_items("ed1", project, [{"title": "N"}], "ghost", scope_id=scope, category_id=category),
+        )
+        for index, attempt in enumerate(attempts):
+            with self.subTest(index=index), self.assertRaises(ValidationError):
+                attempt()
+        self.assertEqual(len(self.svc.list_members(project)), members)
+        self.assertEqual(self.svc.list_assignments(project), [])
+        self.svc.add_member("ed1", project, "kim")
+        self.svc.assign("ed1", item, "kim")
+        self.assertTrue(self.svc.has_account(" kim "))
+        self.assertFalse(self.svc.has_account("ghost"))
+        self.assertFalse(self.svc.has_account(None))  # type: ignore[arg-type]
 
     def test_version_four_database_gets_the_account_table(self) -> None:
         path = temp_db_path(self)
@@ -123,7 +145,7 @@ class AccountTests(AccountCase):
         svc = WorkBoardService(conn, Clock())
         self.assertFalse(svc.has_accounts())
         svc.create_account("kim", GOOD)
-        self.assertFalse(svc.check_login("kim", GOOD))
+        svc.check_login("kim", GOOD)
 
 
 @unittest.skipIf(QApplication is None, "PySide6 is not installed")
@@ -182,6 +204,25 @@ class LoginUiTests(AccountCase):
         self.assertTrue(dialog.attempt())
         self.assertEqual(dialog.user_id, "lee")
 
+    def test_sign_up_refuses_an_id_in_use_and_says_what_to_do(self) -> None:
+        project = self.svc.create_project("ed1", "P")
+        self.svc.add_member("ed1", project, "kim")
+        self.svc.create_account("ed1", GOOD)
+        dialog = self.dialog()
+        dialog.toggle.click()
+        dialog.user.setText("kim")
+        dialog.password.setText(OTHER)
+        dialog.confirm.setText(OTHER)
+        self.assertFalse(dialog.attempt())
+        self.assertIn("이미 프로젝트에서 쓰이는 ID", dialog.message.text())
+        self.assertIsNone(dialog.user_id)
+        errors: list[str] = []
+        window = MainWindow(self.svc, "ed1")
+        self.addCleanup(window.deleteLater)
+        window.show_error = errors.append  # type: ignore[method-assign]
+        self.assertFalse(window.add_member("ghost"))
+        self.assertIn("계정이 없습니다", errors[-1])
+
     def test_change_password_dialog(self) -> None:
         self.svc.create_account("kim", GOOD)
         dialog = ChangePasswordDialog(self.svc, "kim")
@@ -196,48 +237,14 @@ class LoginUiTests(AccountCase):
         self.assertFalse(dialog.attempt())
         dialog.confirm.setText(TEMP)
         self.assertTrue(dialog.attempt())
-        self.assertFalse(self.svc.check_login("kim", TEMP))
+        self.svc.check_login("kim", TEMP)
 
-    def test_forced_change_after_a_reset(self) -> None:
-        project = self.svc.create_project("ed1", "P")
-        self.svc.add_member("ed1", project, "kim")
-        self.svc.create_account("kim", GOOD)
-        self.svc.reset_password("ed1", project, "kim", TEMP)
-        asked: list[ChangePasswordDialog] = []
-
-        def answer(change: ChangePasswordDialog) -> bool:
-            asked.append(change)
-            self.assertTrue(change.old.isHidden())
-            change.new.setText(OTHER)
-            change.confirm.setText(OTHER)
-            return change.attempt()
-
-        dialog = self.dialog()
-        dialog.run_change = answer  # type: ignore[method-assign]
-        dialog.user.setText("kim")
-        dialog.password.setText(TEMP)
-        self.assertTrue(dialog.attempt())
-        self.assertEqual(len(asked), 1)
-        self.assertFalse(self.svc.check_login("kim", OTHER))
-
-    def test_reset_button_is_only_for_non_editor_members(self) -> None:
-        project = self.svc.create_project("ed1", "P")
-        self.svc.add_member("ed1", project, "kim")
-        self.svc.create_account("kim", GOOD)
-        errors: list[str] = []
+    def test_manage_page_offers_no_password_reset(self) -> None:
+        self.svc.create_project("ed1", "P")
         window = MainWindow(self.svc, "ed1")
         self.addCleanup(window.deleteLater)
-        window.show_error = errors.append  # type: ignore[method-assign]
-        page = window.manage_page
-        page.members.selectRow(0)
-        self.assertFalse(page.password_reset.isEnabled())
-        page.members.selectRow(1)
-        self.assertTrue(page.password_reset.isEnabled())
-        self.assertFalse(window.reset_password("kim", "short"))
-        self.assertTrue(window.reset_password("kim", TEMP))
-        self.assertTrue(self.svc.check_login("kim", TEMP))
-        self.assertFalse(window.reset_password("ed1", TEMP))
-        self.assertEqual(len(errors), 2)
+        self.assertFalse(hasattr(window.manage_page, "password_reset"))
+        self.assertFalse(hasattr(window, "reset_password"))
 
 
 if __name__ == "__main__":

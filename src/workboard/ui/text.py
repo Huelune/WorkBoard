@@ -50,12 +50,13 @@ def error_text(error: Exception) -> str:
     """Kind and next step only; raw messages may carry paths or values."""
     if isinstance(error, PermissionDenied):
         return "권한이 없습니다. 정의는 프로젝트 편집자가, 진행은 담당자 본인이 바꿉니다."
+    if isinstance(error, ValidationError) and str(error) == "no account with that ID":
+        return "그 ID로 만든 계정이 없습니다. 먼저 본인이 로그인 창에서 계정을 만든 뒤에 추가하세요."
     if isinstance(error, ValidationError):
         return (
             "입력을 확인하세요. 업무에는 위쪽 두 칸의 항목이 모두 필요하고, 완료에는 근거가, 보류와 반려에는 "
             "사유가 필요합니다. 기한은 YYYY-MM-DD, 링크는 http:// 또는 https:// 주소입니다. "
-            "편집자는 한 명 이상 남아야 하고, 편집자는 역할을 먼저 해제해야 뺄 수 있습니다. "
-            "비밀번호는 8자 이상이고 ID와 달라야 합니다."
+            "편집자는 한 명 이상 남아야 하고, 편집자는 역할을 먼저 해제해야 뺄 수 있습니다."
         )
     if isinstance(error, NotFound):
         return "대상을 찾을 수 없습니다. 새로 고친 뒤 다시 시도하세요."
