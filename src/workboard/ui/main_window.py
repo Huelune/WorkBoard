@@ -101,8 +101,9 @@ class MainWindow(QMainWindow):
         new_project.clicked.connect(lambda: self._ask("새 프로젝트", "프로젝트 이름", self.create_project))
         QShortcut(QKeySequence.StandardKey.Refresh, self, self.refresh)
 
-        self.nav.setCurrentRow(0)
         self.refresh()
+        # Most visits are an assignee updating their own work, so start there when there is any.
+        self.nav.setCurrentRow(1 if self.mine_page.rows else 0)
 
     # ----- state the pages read
 

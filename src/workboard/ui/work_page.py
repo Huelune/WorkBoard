@@ -79,7 +79,7 @@ class WorkPage(QWidget):
         super().__init__()
         self.win, self.mine = window, mine
         self.rows: dict[str, dict] = {}
-        self.expanded: set[object] = set()
+        self.folded: set[object] = set()  # groups the user closed; everything else stays open
 
         self.group = QComboBox()
         for label, value in (("담당자별", "assignee"), ("분류별", "category"), ("묶지 않음", None)):
@@ -130,8 +130,8 @@ class WorkPage(QWidget):
         self.hide_confirmed.toggled.connect(self.reload)
         self.search.textChanged.connect(self.reload)
         self.tree.currentItemChanged.connect(self._show_detail)
-        self.tree.itemExpanded.connect(lambda item: self.expanded.add(item.data(1, ROLE)))
-        self.tree.itemCollapsed.connect(lambda item: self.expanded.discard(item.data(1, ROLE)))
+        self.tree.itemExpanded.connect(lambda item: self.folded.discard(item.data(1, ROLE)))
+        self.tree.itemCollapsed.connect(lambda item: self.folded.add(item.data(1, ROLE)))
         self.tree.itemDoubleClicked.connect(lambda *_: self.win.edit_progress(self.current_row()))
         self.progress_button.clicked.connect(lambda: self.win.edit_progress(self.current_row()))
         self.add_button.clicked.connect(self.win.ask_work_item)
@@ -221,7 +221,7 @@ class WorkPage(QWidget):
                 elif summary["pending"]:
                     parent.setForeground(NOTE_COLUMN, QBrush(amber))
                 self.tree.addTopLevelItem(parent)
-                parent.setExpanded(key in self.expanded)
+                parent.setExpanded(key not in self.folded)
                 parents[key] = parent
 
         for row in shown:

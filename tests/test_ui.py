@@ -107,13 +107,14 @@ class WorkListTests(UiCase):
         self.win = self.window("ed2")
         self.page = self.win.work_page
 
-    def test_grouped_by_assignee_and_collapsed_by_default(self) -> None:
+    def test_grouped_by_assignee_and_open_by_default(self) -> None:
         u1, u2 = self.tops(self.page.tree)
         self.assertEqual(u1.text(0), "u1 · 3건")
         self.assertEqual(u1.text(NOTE_COLUMN), "확인 대기 1 · 기한 초과 1")
         self.assertEqual(u1.data(PROGRESS_COLUMN, ROLE), 83)
         self.assertEqual(u2.text(NOTE_COLUMN), "반려 1")
-        self.assertFalse(u1.isExpanded())
+        self.assertTrue(u1.isExpanded())
+        self.assertTrue(u2.isExpanded())
         self.assertEqual([k.text(0) for k in self.kids(u1)], ["<b>굵게</b>", "a2"])
         self.assertEqual([k.text(NOTE_COLUMN) for k in self.kids(u1)], ["진행 중 · 기한 초과", "확인 대기"])
         self.assertEqual([k.text(0) for k in self.kids(u2)], ["a4", "a5"])
@@ -132,11 +133,14 @@ class WorkListTests(UiCase):
         self.page.search.setText("U2")
         self.assertEqual([i.text(0) for i in self.tops(self.page.tree)], ["a4", "a5"])
 
-    def test_expanded_group_stays_open_after_reload(self) -> None:
-        self.tops(self.page.tree)[1].setExpanded(True)
+    def test_folded_group_stays_folded_after_reload(self) -> None:
+        self.tops(self.page.tree)[1].setExpanded(False)
         self.win.refresh()
         u1, u2 = self.tops(self.page.tree)
-        self.assertEqual((u1.isExpanded(), u2.isExpanded()), (False, True))
+        self.assertEqual((u1.isExpanded(), u2.isExpanded()), (True, False))
+        u2.setExpanded(True)
+        self.win.refresh()
+        self.assertTrue(self.tops(self.page.tree)[1].isExpanded())
 
     def test_detail_escapes_typed_text_and_links_only_urls(self) -> None:
         self.page.group.setCurrentIndex(2)
@@ -256,6 +260,11 @@ class ProgressAndReviewTests(UiCase):
     def setUp(self) -> None:
         super().setUp()
         self.seed()
+
+    def test_app_opens_on_my_work_when_i_have_any(self) -> None:
+        self.assertEqual(self.window("u1").nav.currentRow(), 1)  # 내 업무
+        self.assertEqual(self.window("ed2").nav.currentRow(), 0)  # nothing assigned: the whole list
+        self.assertEqual(self.window("u1").stack.currentIndex(), 1)
 
     def test_assignee_reports_completion_with_evidence(self) -> None:
         window = self.window("u1")
