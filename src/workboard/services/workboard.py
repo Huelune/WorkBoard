@@ -8,7 +8,8 @@ a write only marks its snapshot as needing publication (sync_outbox).
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from math import ceil
@@ -124,6 +125,14 @@ class WorkBoardService:
 
     # ----- helpers
 
+    @contextmanager
+    def _write(self) -> Iterator[None]:
+        # IMMEDIATE takes the write lock before the checks, so a second app window
+        # on the same file cannot change what they read before the write lands.
+        self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            yield
+
     def _now(self) -> str:
         # Stamped here, never taken from the caller.
         return self._clock().astimezone(timezone.utc).isoformat(timespec="microseconds")
@@ -160,7 +169,7 @@ class WorkBoardService:
         actor = clean_text(actor, "actor", required=True)
         name = clean_text(name, "name", required=True)
         project_id = str(uuid4())
-        with self._conn:
+        with self._write():
             now = self._now()
             self._repo.insert(
                 "project", id=project_id, name=name, description=description or "", created_at=now
@@ -171,7 +180,7 @@ class WorkBoardService:
 
     def add_editor(self, actor: str, project_id: str, user_id: str) -> None:
         user_id = clean_text(user_id, "user", required=True)
-        with self._conn:
+        with self._write():
             self._require_editor(actor, project_id)
             self._repo.add_editor(project_id, user_id)
             self._repo.mark_dirty("definition", project_id, "", self._now())
@@ -180,14 +189,14 @@ class WorkBoardService:
         self, actor: str, project_id: str, name: str, kind: str = "", parent_id: str | None = None
     ) -> str:
         name = clean_text(name, "name", required=True)
-        with self._conn:
+        with self._write():
             self._require_editor(actor, project_id)
             self._in_project("scope", parent_id, project_id)
             return self._define("scope", project_id, str(uuid4()), name=name, kind=kind or "", parent_id=parent_id)
 
     def create_category(self, actor: str, project_id: str, name: str, position: int = 0) -> str:
         name = clean_text(name, "name", required=True)
-        with self._conn:
+        with self._write():
             self._require_editor(actor, project_id)
             return self._define("category", project_id, str(uuid4()), name=name, position=position)
 
@@ -202,7 +211,7 @@ class WorkBoardService:
         external_url: str | None = None,
     ) -> str:
         title = clean_text(title, "title", required=True)
-        with self._conn:
+        with self._write():
             self._require_editor(actor, project_id)
             self._in_project("scope", scope_id, project_id)
             self._in_project("category", category_id, project_id)
@@ -218,7 +227,7 @@ class WorkBoardService:
             )
 
     def delete_work_item(self, actor: str, work_item_id: str) -> None:
-        with self._conn:
+        with self._write():
             item = self._get("work_item", work_item_id)
             self._require_editor(actor, item["project_id"])
             self._repo.set_field("work_item", work_item_id, "deleted", 1)
@@ -228,7 +237,7 @@ class WorkBoardService:
         assignee_id = clean_text(assignee_id, "assignee", required=True)
         due_date = validate_due_date(due_date)
         assignment_id = str(uuid4())
-        with self._conn:
+        with self._write():
             item = self._get("work_item", work_item_id)
             self._require_editor(actor, item["project_id"])
             if item["deleted"]:
@@ -246,7 +255,7 @@ class WorkBoardService:
         return assignment_id
 
     def _change_assignment(self, actor: str, assignment_id: str, column: str, value: object) -> None:
-        with self._conn:
+        with self._write():
             assignment = self._assignment(assignment_id)
             self._require_editor(actor, assignment["project_id"])
             self._repo.set_field("assignment", assignment_id, column, value)
@@ -273,7 +282,7 @@ class WorkBoardService:
         evidence_note: str | None = None,
     ) -> bool:
         """Save the assignee's progress. Returns False when nothing changed."""
-        with self._conn:
+        with self._write():
             assignment = self._assignment(assignment_id)
             if assignment["assignee_id"] != actor:
                 raise PermissionDenied("only the assignee may change progress")
@@ -321,7 +330,7 @@ class WorkBoardService:
         self, actor: str, assignment_id: str, decision: str, reason: str | None = None
     ) -> None:
         """Confirm or reject the latest completion report. Does not touch the assignee's status."""
-        with self._conn:
+        with self._write():
             assignment = self._assignment(assignment_id)
             project_id = assignment["project_id"]
             if not self._repo.is_editor(project_id, actor):
@@ -472,7 +481,9 @@ class WorkBoardService:
                     "remaining": remaining,
                     "confirmed": pace["confirmed"],
                     "per_week": pace["per_week"],
-                    "weeks_left": round(remaining / pace["per_week"], 1) if pace["per_week"] else None,
+                    "weeks_left": (
+                        round(remaining * period.weeks / pace["confirmed"], 1) if pace["confirmed"] else None
+                    ),
                     "weekly": pace["weekly"],
                 }
             )

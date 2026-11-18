@@ -115,6 +115,8 @@ def open_database(path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Without this, INSERT OR REPLACE deletes a row without firing the append-only triggers.
+    conn.execute("PRAGMA recursive_triggers = ON")
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version > len(MIGRATIONS):
         conn.close()
