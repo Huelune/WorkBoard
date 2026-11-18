@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Callable
 from datetime import date, datetime, timezone
 
-from PySide6.QtCore import QSignalBlocker
+from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
@@ -45,6 +45,8 @@ class MainWindow(QMainWindow):
         self.records: dict[str, dict] = {}
         self.labels: tuple[str, str] = DEFAULT_LABELS
         self.scope_caption, self.category_caption = QLabel(), QLabel()
+        for caption in (self.scope_caption, self.category_caption):
+            caption.setTextFormat(Qt.TextFormat.PlainText)  # typed by an editor; never markup
         self.setWindowTitle(f"WorkBoard — {actor}")
         self.resize(1180, 720)
 
@@ -58,10 +60,10 @@ class MainWindow(QMainWindow):
         menu.addAction("구성원 추가", self.ask_member)
         menu.addAction("편집자 추가", lambda: self._ask("편집자 추가", "사용자 ID", self.add_editor))
         self.scope_action = menu.addAction(
-            "", lambda: self._ask(f"{self.labels[0]} 추가", f"{self.labels[0]} 이름", self.add_scope)
+            "", lambda: self._ask(f"{self.labels[0]} 추가", "이름", self.add_scope)
         )
         self.category_action = menu.addAction(
-            "", lambda: self._ask(f"{self.labels[1]} 추가", f"{self.labels[1]} 이름", self.add_category)
+            "", lambda: self._ask(f"{self.labels[1]} 추가", "이름", self.add_category)
         )
         menu.addAction("칸 이름 바꾸기", self.ask_labels)
         self.manage.setMenu(menu)

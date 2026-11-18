@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -167,8 +168,10 @@ class WorkItemDialog(_FormDialog):
         self.due_date.setPlaceholderText("YYYY-MM-DD (비워 두면 기한 없음)")
         self.form.addRow(self.modes)
         self.form.addRow("", self.counter)
-        self.form.addRow(labels[0], self.scope)
-        self.form.addRow(labels[1], self.category)
+        for label, field in ((labels[0], self.scope), (labels[1], self.category)):
+            caption = QLabel(label)
+            caption.setTextFormat(Qt.TextFormat.PlainText)  # typed by an editor; never markup
+            self.form.addRow(caption, field)
         self.form.addRow("담당자" if editor else "담당자 (본인)", self.assignee)
         self.form.addRow("기한", self.due_date)
         self.add_buttons("추가")

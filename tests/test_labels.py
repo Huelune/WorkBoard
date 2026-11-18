@@ -113,6 +113,23 @@ class LabelUiTests(unittest.TestCase):
         self.assertEqual(len(self.errors), 1)
         self.assertEqual(self.window.scope_caption.text(), "코드 버전")
 
+    def test_markup_in_a_label_is_shown_as_typed(self) -> None:
+        from PySide6.QtCore import Qt
+
+        markup = "<b>굵게</b><img src=x>"
+        self.assertTrue(self.window.set_labels(markup, markup))
+        for caption in (self.window.scope_caption, self.window.category_caption):
+            self.assertEqual((caption.text(), caption.textFormat()), (markup, Qt.TextFormat.PlainText))
+        dialog = WorkItemDialog([], [], self.svc.list_members(self.project), "ed1", True, self.window.labels)
+        captions = [dialog.form.itemAt(row, dialog.form.ItemRole.LabelRole) for row in range(dialog.form.rowCount())]
+        typed = [c.widget() for c in captions if c and c.widget().text() == markup]
+        self.assertEqual([c.textFormat() for c in typed], [Qt.TextFormat.PlainText] * 2)
+        page = self.window.work_page
+        page.group.setCurrentIndex(2)
+        page.tree.setCurrentItem(page.tree.topLevelItem(0))
+        self.assertIn(markup, page.detail.toPlainText())
+        self.assertNotIn("<img", page.detail.toHtml())
+
     def test_labels_follow_the_selected_project(self) -> None:
         self.window.set_labels("코드 버전", "검증 분야")
         self.window.create_project("다른 프로젝트")
