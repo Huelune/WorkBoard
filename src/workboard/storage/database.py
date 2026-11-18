@@ -126,6 +126,11 @@ INSERT OR IGNORE INTO project_member (project_id, user_id)
     SELECT w.project_id, a.assignee_id FROM assignment a JOIN work_item w ON w.id = a.work_item_id;
 ALTER TABLE work_item ADD COLUMN created_by TEXT;
 """,
+    # 3: each project names its two grouping fields (scope, category) in its own words.
+    """
+ALTER TABLE project ADD COLUMN scope_label TEXT NOT NULL DEFAULT '대상 버전';
+ALTER TABLE project ADD COLUMN category_label TEXT NOT NULL DEFAULT '업무 분야';
+""",
 ]
 
 

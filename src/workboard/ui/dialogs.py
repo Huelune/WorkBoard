@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from workboard.ui.text import RESULT, STATUS
+from workboard.ui.text import DEFAULT_LABELS, RESULT, STATUS
 
 
 class _FormDialog(QDialog):
@@ -118,6 +118,7 @@ class WorkItemDialog(_FormDialog):
         members: list[dict],
         actor: str,
         editor: bool,
+        labels: tuple[str, str] = DEFAULT_LABELS,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__("업무 추가", parent)
@@ -166,8 +167,8 @@ class WorkItemDialog(_FormDialog):
         self.due_date.setPlaceholderText("YYYY-MM-DD (비워 두면 기한 없음)")
         self.form.addRow(self.modes)
         self.form.addRow("", self.counter)
-        self.form.addRow("범위", self.scope)
-        self.form.addRow("분류", self.category)
+        self.form.addRow(labels[0], self.scope)
+        self.form.addRow(labels[1], self.category)
         self.form.addRow("담당자" if editor else "담당자 (본인)", self.assignee)
         self.form.addRow("기한", self.due_date)
         self.add_buttons("추가")

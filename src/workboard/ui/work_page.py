@@ -155,6 +155,8 @@ class WorkPage(QWidget):
         self.detail.clear()
         self.rows = {}
         today, project = window.today(), window.project_id
+        self.group.setItemText(1, f"{window.labels[1]}별")
+        self.tree.headerItem().setText(len(COLUMNS) - 1, window.labels[1])
         red, amber, green = (tone(name, self.palette()) for name in ("red", "amber", "green"))
         editor = bool(project) and window.service.is_editor(window.actor, project)
         self.add_button.setEnabled(bool(project) and window.service.is_member(window.actor, project))
@@ -179,7 +181,7 @@ class WorkPage(QWidget):
             )
             for summary in summaries:
                 key = summary["key"]
-                name = window.person(key) if by == "assignee" else window.names.get(key, "분류 없음")
+                name = window.person(key) if by == "assignee" else window.names.get(key, f"{window.labels[1]} 없음")
                 parent = QTreeWidgetItem([f"{name} · {summary['count']}건", "", "", group_notes(summary)])
                 parent.setData(1, ROLE, key)
                 parent.setData(PROGRESS_COLUMN, ROLE, round(summary["average_progress"]))
@@ -225,4 +227,4 @@ class WorkPage(QWidget):
         if not row:
             self.detail.clear()
             return
-        self.detail.setHtml(detail_html(self.win.service.assignment_detail(row["assignment_id"]), self.win.names, self.win.person))
+        self.detail.setHtml(detail_html(self.win.service.assignment_detail(row["assignment_id"]), self.win.names, self.win.person, self.win.labels))

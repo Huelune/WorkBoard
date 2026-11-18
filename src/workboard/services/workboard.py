@@ -205,6 +205,16 @@ class WorkBoardService:
             self._repo.add_member(project_id, user_id)
             self._repo.mark_dirty("definition", project_id, "", self._now())
 
+    def set_labels(self, actor: str, project_id: str, scope_label: str, category_label: str) -> None:
+        """Rename the project's two grouping fields, e.g. 코드 버전 and 검증 분야."""
+        scope_label = clean_text(scope_label, "scope label", required=True)
+        category_label = clean_text(category_label, "category label", required=True)
+        with self._write():
+            self._require_editor(actor, project_id)
+            self._repo.set_field("project", project_id, "scope_label", scope_label)
+            self._repo.set_field("project", project_id, "category_label", category_label)
+            self._repo.mark_dirty("definition", project_id, "", self._now())
+
     def add_member(self, actor: str, project_id: str, user_id: str, display_name: str | None = None) -> None:
         """Members can be picked as assignees and may add work for themselves."""
         user_id = clean_text(user_id, "user", required=True)

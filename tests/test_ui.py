@@ -125,6 +125,7 @@ class WorkListTests(UiCase):
         self.page.group.setCurrentIndex(1)
         (unit,) = self.tops(self.page.tree)
         self.assertEqual(unit.text(0), "UNIT · 5건")
+        self.assertEqual(self.page.group.itemText(1), "업무 분야별")
         self.page.group.setCurrentIndex(2)
         self.assertEqual(self.page.tree.topLevelItemCount(), 4)
         self.page.search.setText("U2")
@@ -186,6 +187,7 @@ class WorkListTests(UiCase):
         self.svc.add_member("ed1", self.project, "u1", "김 담당")
         members = self.svc.list_members(self.project)
         for_editor = WorkItemDialog([], self.svc.list_categories(self.project), members, "ed2", True)
+        self.assertEqual(for_editor.windowTitle(), "업무 추가")
         labels = [for_editor.assignee.itemText(i) for i in range(for_editor.assignee.count())]
         self.assertEqual(labels, ["ed1", "ed2", "김 담당 (u1)", "u2"])
         self.assertEqual(for_editor.assignee_id(), "ed2")

@@ -12,6 +12,7 @@ STATUS = {"not_started": "미시작", "in_progress": "진행 중", "on_hold": "�
 REVIEW = {"pending": "확인 대기", "confirmed": "확인됨", "rejected": "반려됨"}
 RESULT = {"pass": "통과", "fail": "실패", "na": "해당 없음"}
 DECISION = {"confirmed": "확인", "rejected": "반려"}
+DEFAULT_LABELS = ("대상 버전", "업무 분야")
 _BLOCKS = "▁▂▃▄▅▆▇█"
 
 
@@ -65,7 +66,9 @@ def _link(reference: str | None) -> str:
     return f'<a href="{safe}">{safe}</a>' if reference.startswith(("http://", "https://")) else safe
 
 
-def detail_html(detail: dict, names: dict[str | None, str], person=lambda user_id: user_id) -> str:  # noqa: ANN001
+def detail_html(  # noqa: ANN001
+    detail: dict, names: dict[str | None, str], person=lambda user_id: user_id, labels=DEFAULT_LABELS
+) -> str:
     """Detail panel body. Everything typed by a person is escaped before it becomes HTML."""
     row = detail["row"]
     text = lambda value: escape(str(value)) if value not in (None, "") else "-"  # noqa: E731
@@ -73,7 +76,7 @@ def detail_html(detail: dict, names: dict[str | None, str], person=lambda user_i
     lines = [
         f"<h3>{text(row['title'])}</h3>",
         f"<p><b>담당자</b> {text(person(row['assignee_id']))} · <b>기한</b> {text(row['due_date'])}<br>"
-        f"<b>범위</b> {text(names.get(row['scope_id']))} · <b>분류</b> {text(names.get(row['category_id']))}<br>"
+        f"<b>{text(labels[0])}</b> {text(names.get(row['scope_id']))} · <b>{text(labels[1])}</b> {text(names.get(row['category_id']))}<br>"
         f"<b>외부 참조</b> {_link(row['external_url'] or row['external_ref'])}{own}</p>",
         f"<p><b>상태</b> {state_label(row)} · {row['progress']}%"
         + (f" · {RESULT[row['result']]}" if row["result"] else "")

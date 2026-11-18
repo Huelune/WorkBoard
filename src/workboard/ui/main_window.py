@@ -29,7 +29,7 @@ from workboard.services import WorkBoardService
 from workboard.ui.dialogs import ProgressDialog, WorkItemDialog
 from workboard.ui.pace_page import PacePage
 from workboard.ui.review_page import ReviewPage
-from workboard.ui.text import error_text
+from workboard.ui.text import DEFAULT_LABELS, error_text
 from workboard.ui.work_page import WorkPage
 
 PAGES = ["업무 목록", "내 업무", "확인 대기", "현황·속도"]
@@ -42,6 +42,9 @@ class MainWindow(QMainWindow):
         self.service, self.actor = service, actor
         self.names: dict[str | None, str] = {}
         self.people: dict[str, str] = {}
+        self.records: dict[str, dict] = {}
+        self.labels: tuple[str, str] = DEFAULT_LABELS
+        self.scope_caption, self.category_caption = QLabel(), QLabel()
         self.setWindowTitle(f"WorkBoard — {actor}")
         self.resize(1180, 720)
 
@@ -54,15 +57,20 @@ class MainWindow(QMainWindow):
         menu = QMenu(self.manage)
         menu.addAction("구성원 추가", self.ask_member)
         menu.addAction("편집자 추가", lambda: self._ask("편집자 추가", "사용자 ID", self.add_editor))
-        menu.addAction("범위 추가", lambda: self._ask("범위 추가", "범위 이름 (예: 코드 버전)", self.add_scope))
-        menu.addAction("분류 추가", lambda: self._ask("분류 추가", "분류 이름", self.add_category))
+        self.scope_action = menu.addAction(
+            "", lambda: self._ask(f"{self.labels[0]} 추가", f"{self.labels[0]} 이름", self.add_scope)
+        )
+        self.category_action = menu.addAction(
+            "", lambda: self._ask(f"{self.labels[1]} 추가", f"{self.labels[1]} 이름", self.add_category)
+        )
+        menu.addAction("칸 이름 바꾸기", self.ask_labels)
         self.manage.setMenu(menu)
         self.warning = QLabel("기록이 변경됨: 앱 밖에서 고친 흔적이 있습니다")
         self.warning.setStyleSheet("color: #e5534b; font-weight: bold;")
         self.sync = QLabel()
 
         top = QHBoxLayout()
-        for widget in (QLabel("프로젝트"), self.project, QLabel("범위"), self.scope, QLabel("분류"), self.category):
+        for widget in (QLabel("프로젝트"), self.project, self.scope_caption, self.scope, self.category_caption, self.category):
             top.addWidget(widget)
         top.addWidget(new_project)
         top.addWidget(self.manage)
@@ -139,7 +147,9 @@ class MainWindow(QMainWindow):
             combo.setCurrentIndex(max(0, combo.findData(keep)))
 
     def refresh(self) -> None:
-        self._fill(self.project, self.service.list_projects(), None)
+        projects = self.service.list_projects()
+        self.records = {record["id"]: record for record in projects}
+        self._fill(self.project, projects, None)
         self._project_changed()
 
     def _project_changed(self) -> None:
@@ -147,6 +157,12 @@ class MainWindow(QMainWindow):
         scopes = self.service.list_scopes(project) if project else []
         categories = self.service.list_categories(project) if project else []
         self.names = {record["id"]: record["name"] for record in scopes + categories}
+        record = self.records.get(project)
+        self.labels = (record["scope_label"], record["category_label"]) if record else DEFAULT_LABELS
+        self.scope_caption.setText(self.labels[0])
+        self.category_caption.setText(self.labels[1])
+        self.scope_action.setText(f"{self.labels[0]} 추가")
+        self.category_action.setText(f"{self.labels[1]} 추가")
         members = self.service.list_members(project) if project else []
         self.people = {m["user_id"]: m["display_name"] or m["user_id"] for m in members}
         self._fill(self.scope, scopes, "전체")
@@ -199,6 +215,9 @@ class MainWindow(QMainWindow):
     def add_member(self, user_id: str, display_name: str = "") -> bool:
         return self.act(lambda: self.service.add_member(self.actor, self.project_id, user_id, display_name))
 
+    def set_labels(self, scope_label: str, category_label: str) -> bool:
+        return self.act(lambda: self.service.set_labels(self.actor, self.project_id, scope_label, category_label))
+
     def add_work_items(self, values: dict) -> bool:
         return self.act(
             lambda: self.service.add_work_items(
@@ -241,10 +260,24 @@ class MainWindow(QMainWindow):
             self.service.list_members(project),
             self.actor,
             self.service.is_editor(self.actor, project),
+            self.labels,
             self,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.add_work_items(dialog.values())
+
+    def ask_labels(self) -> None:
+        """Let an editor name the two grouping fields in the project's own words."""
+        first, accepted = QInputDialog.getText(
+            self, "칸 이름 바꾸기", "첫째 칸 이름 (예: 코드 버전, 대상 버전)", text=self.labels[0]
+        )
+        if not accepted:
+            return
+        second, accepted = QInputDialog.getText(
+            self, "칸 이름 바꾸기", "둘째 칸 이름 (예: 검증 분야, 업무 분야)", text=self.labels[1]
+        )
+        if accepted:
+            self.set_labels(first, second)
 
     def ask_member(self) -> None:
         user_id, accepted = QInputDialog.getText(self, "구성원 추가", "사용자 ID")
