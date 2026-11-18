@@ -1,6 +1,7 @@
 # 예시 값만 사용합니다. 실제 값은 홈 폴더의 .workboard/config.toml에 두고 커밋하지 않습니다.
 # 다른 위치를 쓰려면 WORKBOARD_CONFIG 환경 변수에 파일 경로를 넣습니다.
-# 비워 두면 DB는 홈 폴더의 .workboard/workboard.db, 사용자 ID는 OS 로그인 이름입니다.
+# 비워 두면 DB는 홈 폴더의 .workboard/workboard.db입니다.
+# [user] id는 로그인 창의 ID 칸에 미리 채울 값입니다. 비워 두면 채우지 않습니다.
 [storage]
 local_db_path = ""
 nas_snapshot_root = ""

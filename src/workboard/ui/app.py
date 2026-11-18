@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 from workboard.config import load_settings
 from workboard.services import WorkBoardService
 from workboard.storage import open_database
+from workboard.ui.login import LoginDialog
 from workboard.ui.main_window import MainWindow
 
 
@@ -16,7 +17,11 @@ def run() -> int:
     app = QApplication(sys.argv[:1])
     conn = open_database(settings.db_path)
     try:
-        window = MainWindow(WorkBoardService(conn), settings.user_id)
+        service = WorkBoardService(conn)
+        login = LoginDialog(service, settings.user_id)
+        if login.exec() != LoginDialog.DialogCode.Accepted or not login.user_id:
+            return 0
+        window = MainWindow(service, login.user_id)
         window.show()
         return app.exec()
     finally:

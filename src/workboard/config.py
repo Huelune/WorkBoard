@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import getpass
 import os
 import tomllib
 from dataclasses import dataclass
@@ -20,10 +19,11 @@ def default_config_path() -> Path:
     return Path(override) if override else Path.home() / ".workboard" / "config.toml"
 
 
-def load_settings(path: Path | None = None, *, home: Path | None = None, login: str | None = None) -> Settings:
+def load_settings(path: Path | None = None, *, home: Path | None = None) -> Settings:
     """Read the settings file; anything missing or blank falls back to a per-user default.
 
-    The user ID defaults to the OS login name (stage 0 assumption about user identity).
+    `user_id` only prefills the login box. It stays empty unless the file sets it, so the
+    OS account name never shows up on screen by itself.
     """
     # utf-8-sig: Notepad and Windows PowerShell save UTF-8 with a byte order mark.
     path = path or default_config_path()
@@ -32,5 +32,5 @@ def load_settings(path: Path | None = None, *, home: Path | None = None, login: 
     user_id = str(data.get("user", {}).get("id") or "").strip()
     return Settings(
         db_path=Path(db_path) if db_path else (home or Path.home()) / ".workboard" / "workboard.db",
-        user_id=user_id or login or getpass.getuser(),
+        user_id=user_id,
     )

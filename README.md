@@ -20,6 +20,8 @@ python3 -m unittest discover -s tests -v
 
 설정은 `config.example.toml`을 참고해 홈 폴더의 `.workboard/config.toml`에 둡니다. 없으면 기본값으로 동작합니다.
 
+앱을 열면 ID와 비밀번호를 묻습니다. 그 PC에서 처음 열 때는 계정을 만듭니다. 계정은 그 PC의 로컬 DB에만 있습니다.
+
 ## 문서
 
 - [제품 계획](docs/product-plan.md)

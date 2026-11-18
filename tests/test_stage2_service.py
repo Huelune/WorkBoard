@@ -43,28 +43,28 @@ class Stage2ServiceTests(unittest.TestCase):
 
 class SettingsTests(unittest.TestCase):
     def test_defaults_without_a_file(self) -> None:
-        settings = load_settings(Path("does-not-exist.toml"), home=Path("H"), login="me")
-        self.assertEqual((settings.db_path, settings.user_id), (Path("H") / ".workboard" / "workboard.db", "me"))
+        settings = load_settings(Path("does-not-exist.toml"), home=Path("H"))
+        self.assertEqual((settings.db_path, settings.user_id), (Path("H") / ".workboard" / "workboard.db", ""))
 
     def test_file_overrides_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "config.toml"
             path.write_text('[storage]\nlocal_db_path = "D:/data/wb.db"\n[user]\nid = " kim "\n', encoding="utf-8")
-            settings = load_settings(path, home=Path("H"), login="me")
+            settings = load_settings(path, home=Path("H"))
         self.assertEqual((settings.db_path, settings.user_id), (Path("D:/data/wb.db"), "kim"))
 
     def test_file_saved_with_a_byte_order_mark_is_read(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "config.toml"
             path.write_text("[user]\nid = 'kim'\n", encoding="utf-8-sig")
-            self.assertEqual(load_settings(path, home=Path("H"), login="me").user_id, "kim")
+            self.assertEqual(load_settings(path, home=Path("H")).user_id, "kim")
 
     def test_blank_values_fall_back(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "config.toml"
             path.write_text('[storage]\nlocal_db_path = ""\n[user]\nid = ""\n', encoding="utf-8")
-            settings = load_settings(path, home=Path("H"), login="me")
-        self.assertEqual(settings.user_id, "me")
+            settings = load_settings(path, home=Path("H"))
+        self.assertEqual(settings.user_id, "")
         self.assertEqual(settings.db_path.name, "workboard.db")
 
 

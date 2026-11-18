@@ -89,6 +89,18 @@ class Repository:
                 (display_name, project_id, user_id),
             )
 
+    def get_account(self, user_id: str) -> dict | None:
+        return self.one("SELECT * FROM account WHERE user_id = ?", (user_id,))
+
+    def account_count(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM account").fetchone()[0]
+
+    def set_password(self, user_id: str, password_hash: str, must_change: bool) -> None:
+        self._conn.execute(
+            "UPDATE account SET password_hash = ?, must_change = ? WHERE user_id = ?",
+            (password_hash, int(must_change), user_id),
+        )
+
     def remove_member(self, project_id: str, user_id: str) -> None:
         self._conn.execute(
             "DELETE FROM project_member WHERE project_id = ? AND user_id = ?", (project_id, user_id)

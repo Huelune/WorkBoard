@@ -32,6 +32,7 @@ from workboard.domain import (
     validate_due_date,
     validate_progress,
 )
+from workboard.domain.passwords import DUMMY_HASH, hash_password, validate_new_password, verify_password
 from workboard.storage import Repository
 from workboard.storage.database import APPEND_ONLY_TABLES
 
@@ -185,6 +186,60 @@ class WorkBoardService:
         self._repo.insert(table, id=record_id, project_id=project_id, **values)
         self._repo.mark_dirty("definition", project_id, "", self._now())
         return record_id
+
+    # ----- accounts (who is at the keyboard)
+    # shortcut: no lockout after repeated wrong passwords, add one if a shared PC makes guessing realistic.
+
+    def has_accounts(self) -> bool:
+        return self._repo.account_count() > 0
+
+    def create_account(self, user_id: str, password: str) -> None:
+        """Sign up on this PC. The ID is what editors put on the member list."""
+        user_id = clean_text(user_id, "user", required=True)
+        password_hash = hash_password(validate_new_password(user_id, password))
+        with self._write():
+            if self._repo.get_account(user_id):
+                raise ValidationError("that ID is already taken")
+            self._repo.insert(
+                "account", user_id=user_id, password_hash=password_hash, must_change=0, created_at=self._now()
+            )
+
+    def check_login(self, user_id: str, password: str) -> bool:
+        """Raise PermissionDenied unless the ID and password match. True means the password must be changed.
+
+        An unknown ID and a wrong password fail the same way and take the same time.
+        """
+        account = self._repo.get_account(user_id.strip()) if isinstance(user_id, str) else None
+        matches = verify_password(password, account["password_hash"] if account else DUMMY_HASH)
+        if not (account and matches):
+            raise PermissionDenied("wrong ID or password")
+        return bool(account["must_change"])
+
+    def change_password(self, user_id: str, old_password: str, new_password: str) -> None:
+        self.check_login(user_id, old_password)
+        user_id = user_id.strip()
+        if new_password == old_password:
+            raise ValidationError("the new password must differ from the old one")
+        password_hash = hash_password(validate_new_password(user_id, new_password))
+        with self._write():
+            self._repo.set_password(user_id, password_hash, must_change=False)
+
+    def reset_password(self, actor: str, project_id: str, user_id: str, new_password: str) -> None:
+        """An editor sets a temporary password for a member who forgot theirs; it must be changed at login.
+
+        Never for another editor: one editor holding two editor accounts could confirm their own work.
+        """
+        user_id = clean_text(user_id, "user", required=True)
+        password_hash = hash_password(validate_new_password(user_id, new_password))
+        with self._write():
+            self._require_editor(actor, project_id)
+            if self._repo.is_editor(project_id, user_id):
+                raise PermissionDenied("an editor's password cannot be reset by someone else")
+            if not self._repo.is_member(project_id, user_id):
+                raise ValidationError("that person is not a member of this project")
+            if not self._repo.get_account(user_id):
+                raise NotFound("account not found")
+            self._repo.set_password(user_id, password_hash, must_change=True)
 
     # ----- definitions (project editors)
 
