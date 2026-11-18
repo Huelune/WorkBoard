@@ -40,6 +40,26 @@ def plain(value: object) -> object:
     return value.toPython() if hasattr(value, "toPython") else value
 
 
+FORCE_DISABLE_MACROS = 3  # msoAutomationSecurityForceDisable
+
+
+def prepare(excel: object) -> bool:
+    """Make this Excel safe to open a workbook in, and visible. Returns False if that failed.
+
+    An Excel driven by another program opens files at the lowest macro security, so a
+    workbook's own macros (Workbook_Open and the like) would run without asking. The import
+    only reads cell values, so macros and events are switched off for this Excel instance.
+
+    The settings go through dynamicCall on purpose. On the application object setProperty
+    quietly stores a Qt-side value and never reaches Excel, and property() then reads that
+    value back, so it looks set when it is not. The check below asks Excel itself.
+    """
+    excel.dynamicCall("SetAutomationSecurity(int)", FORCE_DISABLE_MACROS)
+    excel.dynamicCall("SetEnableEvents(bool)", False)
+    excel.dynamicCall("SetVisible(bool)", True)  # so a prompt from Excel or the security software can be answered
+    return excel.dynamicCall("AutomationSecurity") == FORCE_DISABLE_MACROS and excel.dynamicCall("EnableEvents") is False
+
+
 def read_excel(path: str) -> list[Sheet]:
     from PySide6.QtAxContainer import QAxObject  # imported here so the rest of the package needs no Qt
 
@@ -48,7 +68,8 @@ def read_excel(path: str) -> list[Sheet]:
         raise ExcelError("not_installed")
     books = None
     try:
-        excel.setProperty("Visible", True)
+        if not prepare(excel):
+            raise ExcelError("cannot_open")  # refuse to open anything if macros could not be disabled
         books = excel.querySubObject("Workbooks")
         book = (
             books.querySubObject(

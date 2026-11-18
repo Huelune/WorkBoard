@@ -50,6 +50,24 @@ class ExcelReaderTests(unittest.TestCase):
         self.assertEqual(grid[2], ["", "제목", "담당"])  # sheet row 3 is grid index 2
         self.assertEqual(grid[3], ["", "예시 함수 1", "예시 담당"])
 
+    def test_macros_and_events_are_off_before_anything_is_opened(self) -> None:
+        """Regression: an automated Excel opens workbooks at the lowest macro security by default."""
+        from PySide6.QtAxContainer import QAxObject
+
+        from workboard.import_export.excel import FORCE_DISABLE_MACROS, prepare
+
+        excel = QAxObject("Excel.Application")
+        try:
+            # Asked of Excel itself (dynamicCall); property() on this object only echoes Qt-side values.
+            self.assertEqual(excel.dynamicCall("AutomationSecurity"), 1)  # the unsafe default: macros run
+            self.assertFalse(excel.dynamicCall("Visible"))
+            self.assertTrue(prepare(excel))
+            self.assertEqual(excel.dynamicCall("AutomationSecurity"), FORCE_DISABLE_MACROS)
+            self.assertIs(excel.dynamicCall("EnableEvents"), False)
+            self.assertIs(excel.dynamicCall("Visible"), True)
+        finally:
+            excel.dynamicCall("Quit()")
+
     def test_a_file_excel_cannot_open_is_reported_by_kind(self) -> None:
         with self.assertRaises(ExcelError) as caught:
             read_excel(str(self.folder / "없는 파일.xlsx"))
