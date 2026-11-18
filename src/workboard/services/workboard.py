@@ -173,8 +173,13 @@ class WorkBoardService:
         return isinstance(actor, str) and self._repo.is_editor(project_id, actor)
 
     def _in_project(self, table: str, record_id: str | None, project_id: str) -> None:
-        if record_id is not None and self._get(table, record_id)["project_id"] != project_id:
+        if record_id is None:
+            return
+        record = self._get(table, record_id)
+        if record["project_id"] != project_id:
             raise ValidationError(f"{table} belongs to another project")
+        if record["deleted"]:
+            raise ValidationError(f"{table} was deleted and cannot be used for new work")
 
     def _define(self, table: str, project_id: str, record_id: str, **values: object) -> str:
         self._repo.insert(table, id=record_id, project_id=project_id, **values)
@@ -204,6 +209,50 @@ class WorkBoardService:
             self._require_editor(actor, project_id)
             self._repo.add_editor(project_id, user_id)
             self._repo.add_member(project_id, user_id)
+            self._repo.mark_dirty("definition", project_id, "", self._now())
+
+    def _item(self, kind: str, item_id: str) -> dict:
+        if kind not in ("scope", "category"):
+            raise ValidationError("unknown kind of item")
+        return self._get(kind, item_id)
+
+    def rename_item(self, actor: str, kind: str, item_id: str, name: str) -> None:
+        """Rename a scope or category item; work that uses it shows the new name."""
+        name = clean_text(name, "name", required=True)
+        with self._write():
+            item = self._item(kind, item_id)
+            self._require_editor(actor, item["project_id"])
+            self._repo.set_field(kind, item_id, "name", name)
+            self._repo.mark_dirty("definition", item["project_id"], "", self._now())
+
+    def delete_item(self, actor: str, kind: str, item_id: str) -> None:
+        """Retire a scope or category item: it leaves the pick lists, old work keeps showing it."""
+        with self._write():
+            item = self._item(kind, item_id)
+            self._require_editor(actor, item["project_id"])
+            self._repo.set_field(kind, item_id, "deleted", 1)
+            self._repo.mark_dirty("definition", item["project_id"], "", self._now())
+
+    def remove_member(self, actor: str, project_id: str, user_id: str) -> None:
+        """Take someone off the member list. Their assignments and progress stay as they are."""
+        user_id = clean_text(user_id, "user", required=True)
+        with self._write():
+            self._require_editor(actor, project_id)
+            if self._repo.is_editor(project_id, user_id):
+                raise ValidationError("remove the editor role first")
+            self._repo.remove_member(project_id, user_id)
+            self._repo.mark_dirty("definition", project_id, "", self._now())
+
+    def remove_editor(self, actor: str, project_id: str, user_id: str) -> None:
+        """Take the editor role away; the person stays a member. A project keeps at least one editor."""
+        user_id = clean_text(user_id, "user", required=True)
+        with self._write():
+            self._require_editor(actor, project_id)
+            if not self._repo.is_editor(project_id, user_id):
+                raise ValidationError("that member is not an editor")
+            if self._repo.editor_count(project_id) == 1:
+                raise ValidationError("a project needs at least one editor")
+            self._repo.remove_editor(project_id, user_id)
             self._repo.mark_dirty("definition", project_id, "", self._now())
 
     def set_labels(self, actor: str, project_id: str, scope_label: str, category_label: str) -> None:
@@ -547,13 +596,13 @@ class WorkBoardService:
 
     # A blank or unknown project is NotFound, so it can never widen a listing to every project.
 
-    def list_scopes(self, project_id: str) -> list[dict]:
+    def list_scopes(self, project_id: str, include_deleted: bool = False) -> list[dict]:
         self._get("project", project_id)
-        return self._repo.listing("scope", project_id)
+        return self._repo.listing("scope", project_id, live_only=not include_deleted)
 
-    def list_categories(self, project_id: str) -> list[dict]:
+    def list_categories(self, project_id: str, include_deleted: bool = False) -> list[dict]:
         self._get("project", project_id)
-        return self._repo.listing("category", project_id, "position, rowid")
+        return self._repo.listing("category", project_id, "position, rowid", live_only=not include_deleted)
 
     def list_assignments(
         self,

@@ -131,6 +131,11 @@ ALTER TABLE work_item ADD COLUMN created_by TEXT;
 ALTER TABLE project ADD COLUMN scope_label TEXT NOT NULL DEFAULT '대상 버전';
 ALTER TABLE project ADD COLUMN category_label TEXT NOT NULL DEFAULT '업무 분야';
 """,
+    # 4: field items are retired, not erased, because existing work items still point at them.
+    """
+ALTER TABLE scope ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE category ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
+""",
 ]
 
 

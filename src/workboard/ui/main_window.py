@@ -148,7 +148,14 @@ class MainWindow(QMainWindow):
         project = self.project_id
         scopes = self.service.list_scopes(project) if project else []
         categories = self.service.list_categories(project) if project else []
-        self.names = {record["id"]: record["name"] for record in scopes + categories}
+        # Names include retired items so old work still shows what it was filed under.
+        named = (
+            self.service.list_scopes(project, include_deleted=True)
+            + self.service.list_categories(project, include_deleted=True)
+            if project
+            else []
+        )
+        self.names = {record["id"]: record["name"] for record in named}
         record = self.records.get(project)
         self.labels = (record["scope_label"], record["category_label"]) if record else DEFAULT_LABELS
         self.scope_caption.setText(self.labels[0])
@@ -203,6 +210,18 @@ class MainWindow(QMainWindow):
 
     def add_member(self, user_id: str, display_name: str = "") -> bool:
         return self.act(lambda: self.service.add_member(self.actor, self.project_id, user_id, display_name))
+
+    def rename_item(self, kind: str, item_id: str, name: str) -> bool:
+        return self.act(lambda: self.service.rename_item(self.actor, kind, item_id, name))
+
+    def delete_item(self, kind: str, item_id: str) -> bool:
+        return self.act(lambda: self.service.delete_item(self.actor, kind, item_id))
+
+    def remove_member(self, user_id: str) -> bool:
+        return self.act(lambda: self.service.remove_member(self.actor, self.project_id, user_id))
+
+    def remove_editor(self, user_id: str) -> bool:
+        return self.act(lambda: self.service.remove_editor(self.actor, self.project_id, user_id))
 
     def set_labels(self, scope_label: str, category_label: str) -> bool:
         return self.act(lambda: self.service.set_labels(self.actor, self.project_id, scope_label, category_label))
@@ -278,6 +297,32 @@ class MainWindow(QMainWindow):
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.add_editor(user_id)
+
+    def _confirm(self, title: str, question: str) -> bool:
+        return QMessageBox.question(self, title, question) == QMessageBox.StandardButton.Yes
+
+    def ask_rename_item(self, kind: str, item_id: str | None) -> None:
+        if not item_id:
+            return
+        name, accepted = QInputDialog.getText(self, "이름 바꾸기", "새 이름", text=self.names.get(item_id, ""))
+        if accepted:
+            self.rename_item(kind, item_id, name)
+
+    def ask_delete_item(self, kind: str, item_id: str | None) -> None:
+        if item_id and self._confirm(
+            "항목 삭제", "이 항목을 삭제할까요? 새 업무에서는 고를 수 없게 되고, 이미 등록된 업무에는 이름이 그대로 보입니다."
+        ):
+            self.delete_item(kind, item_id)
+
+    def ask_remove_member(self, user_id: str | None) -> None:
+        if user_id and self._confirm(
+            "구성원 삭제", "이 구성원을 목록에서 뺄까요? 맡은 업무와 진행 기록은 그대로 남습니다."
+        ):
+            self.remove_member(user_id)
+
+    def ask_remove_editor(self, user_id: str | None) -> None:
+        if user_id and self._confirm("편집자 해제", "이 구성원의 편집자 역할을 해제할까요? 구성원으로는 남습니다."):
+            self.remove_editor(user_id)
 
     def ask_delete(self, row: dict | None) -> None:
         if not row:

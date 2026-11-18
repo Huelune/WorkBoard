@@ -57,10 +57,13 @@ class Repository:
     def set_field(self, table: str, record_id: str, column: str, value: object) -> None:
         self._conn.execute(f"UPDATE {table} SET {column} = ? WHERE id = ?", (value, record_id))
 
-    def listing(self, table: str, project_id: str | None = None, order: str = "rowid") -> list[dict]:
+    def listing(
+        self, table: str, project_id: str | None = None, order: str = "rowid", live_only: bool = False
+    ) -> list[dict]:
         if project_id is None:
             return self.all(f"SELECT * FROM {table} ORDER BY {order}")
-        return self.all(f"SELECT * FROM {table} WHERE project_id = ? ORDER BY {order}", (project_id,))
+        live = " AND deleted = 0" if live_only else ""
+        return self.all(f"SELECT * FROM {table} WHERE project_id = ?{live} ORDER BY {order}", (project_id,))
 
     def is_editor(self, project_id: str, user_id: str) -> bool:
         return (
@@ -85,6 +88,21 @@ class Repository:
                 "UPDATE project_member SET display_name = ? WHERE project_id = ? AND user_id = ?",
                 (display_name, project_id, user_id),
             )
+
+    def remove_member(self, project_id: str, user_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM project_member WHERE project_id = ? AND user_id = ?", (project_id, user_id)
+        )
+
+    def remove_editor(self, project_id: str, user_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM project_editor WHERE project_id = ? AND user_id = ?", (project_id, user_id)
+        )
+
+    def editor_count(self, project_id: str) -> int:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM project_editor WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
 
     def is_member(self, project_id: str, user_id: str) -> bool:
         return (

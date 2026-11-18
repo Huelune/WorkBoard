@@ -53,7 +53,8 @@ def error_text(error: Exception) -> str:
     if isinstance(error, ValidationError):
         return (
             "입력을 확인하세요. 업무에는 위쪽 두 칸의 항목이 모두 필요하고, 완료에는 근거가, 보류와 반려에는 "
-            "사유가 필요합니다. 기한은 YYYY-MM-DD, 링크는 http:// 또는 https:// 주소입니다."
+            "사유가 필요합니다. 기한은 YYYY-MM-DD, 링크는 http:// 또는 https:// 주소입니다. "
+            "편집자는 한 명 이상 남아야 하고, 편집자는 역할을 먼저 해제해야 뺄 수 있습니다."
         )
     if isinstance(error, NotFound):
         return "대상을 찾을 수 없습니다. 새로 고친 뒤 다시 시도하세요."
