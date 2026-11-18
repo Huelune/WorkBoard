@@ -193,9 +193,33 @@ class WorkListTests(UiCase):
         self.assertEqual(for_editor.assignee_id(), "u1")
         for_editor.assignee.setEditText("새사람")
         self.assertEqual(for_editor.assignee_id(), "새사람")
+        self.assertEqual((for_editor.modes.currentIndex(), len(for_editor.rows)), (0, 1))
+        self.assertEqual(for_editor.counter.text(), "0건 등록")
+        for_editor.rows[0][1].setText(" 함수 1 ")
+        for_editor.add_row()
+        for_editor.rows[1][1].setText("함수 2")
+        for_editor.rows[1][2].setText("REF-2")
+        for_editor.rows[1][1].returnPressed.emit()
+        self.assertEqual(len(for_editor.rows), 3)
+        for_editor.rows[2][2].setText("제목 없는 줄")
+        self.assertEqual(for_editor.counter.text(), "3건 등록")
+        for_editor.remove_row(for_editor.rows[2])
+        self.assertEqual(
+            for_editor.values()["items"],
+            [
+                {"title": "함수 1", "external_ref": "", "external_url": ""},
+                {"title": "함수 2", "external_ref": "REF-2", "external_url": ""},
+            ],
+        )
+        for_editor.remove_row(for_editor.rows[1])
+        for_editor.remove_row(for_editor.rows[0])
+        self.assertEqual((len(for_editor.rows), for_editor.counter.text()), (1, "0건 등록"))
+        for_editor.modes.setCurrentIndex(1)
         for_editor.titles.setPlainText("가\n나\n\n다")
         self.assertEqual(for_editor.counter.text(), "3건 등록")
         self.assertEqual([i["title"] for i in for_editor.values()["items"]], ["가", "나", "다"])
+        for_editor.modes.setCurrentIndex(0)
+        self.assertEqual(for_editor.values()["items"], [])
         for_member = WorkItemDialog([], [], members, "u1", False)
         self.assertEqual(for_member.assignee.count(), 1)
         self.assertEqual(for_member.assignee_id(), "u1")
