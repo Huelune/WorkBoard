@@ -59,12 +59,12 @@ class SettingsTests(unittest.TestCase):
             path.write_text("[user]\nid = 'kim'\n", encoding="utf-8-sig")
             self.assertEqual(load_settings(path, home=Path("H")).user_id, "kim")
 
-    def test_demo_settings_stay_in_the_temp_folder(self) -> None:
+    def test_demo_settings_use_a_private_folder_apart_from_the_real_database(self) -> None:
         settings = demo_settings()
         self.assertEqual(settings.user_id, "tester")
-        self.assertEqual(settings.db_path.name, "demo.db")
-        self.assertEqual(settings.db_path.parent.name, "workboard-demo")
-        self.assertEqual(settings.db_path.parent.parent, Path(tempfile.gettempdir()))
+        self.assertEqual(settings.db_path, Path.home() / ".workboard" / "demo" / "demo.db")
+        self.assertNotEqual(settings.db_path, load_settings(Path("does-not-exist.toml")).db_path)
+        self.assertNotIn(Path(tempfile.gettempdir()), settings.db_path.parents)  # not a shared temp folder
 
     def test_blank_values_fall_back(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
