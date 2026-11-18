@@ -26,6 +26,7 @@ from workboard.domain import (
     WorkItemId,
     clean_text,
     history_hash,
+    is_overdue,
     review_state,
     validate_due_date,
     validate_progress,
@@ -67,7 +68,7 @@ def _is(row: dict, state: ReviewState) -> bool:
 
 
 def _overdue(row: dict, today: str) -> bool:
-    return bool(row["due_date"]) and row["due_date"] < today and row["status"] != Status.DONE
+    return is_overdue(row["due_date"], row["status"], today)
 
 
 def _counts(rows: list[dict], today: str) -> dict:
@@ -430,6 +431,10 @@ class WorkBoardService:
     def pending_sync_count(self) -> int:
         return self._repo.outbox_count()
 
+    def is_editor(self, actor: str, project_id: str) -> bool:
+        """For the UI to enable editor controls; the write methods still check for themselves."""
+        return isinstance(project_id, str) and self._is_editor(project_id, actor)
+
     # ----- reads (anyone)
     # shortcut: aggregates count rows in Python per call, move to SQL if a project passes ~10k assignments.
 
@@ -486,7 +491,14 @@ class WorkBoardService:
             if _is(row, ReviewState.PENDING) and row["assignee_id"] != actor
         ]
 
-    def group_summary(self, project_id: str, by: str, today: str) -> list[dict]:
+    def group_summary(
+        self,
+        project_id: str,
+        by: str,
+        today: str,
+        scope_id: str | None = None,
+        category_id: str | None = None,
+    ) -> list[dict]:
         """One line per assignee or category. average_progress is self-reported; trust confirmed."""
         if by not in ("assignee", "category"):
             raise ValidationError("group by assignee or category")
@@ -499,7 +511,9 @@ class WorkBoardService:
                 "average_progress": round(sum(r["progress"] for r in rows) / len(rows), 1),
                 **_counts(rows, today),
             }
-            for key, rows in _group(self._rows(project_id=project_id), f"{by}_id").items()
+            for key, rows in _group(
+                self._rows(project_id=project_id, scope_id=scope_id, category_id=category_id), f"{by}_id"
+            ).items()
         ]
 
     def project_status(self, project_id: str, today: str) -> dict:

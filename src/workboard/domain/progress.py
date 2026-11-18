@@ -117,6 +117,11 @@ def validate_due_date(value: str | None) -> str | None:
     return value
 
 
+def is_overdue(due_date: str | None, status: str, today: str) -> bool:
+    """Past its due date and not reported done. Dates are YYYY-MM-DD strings."""
+    return bool(due_date) and due_date < today and status != Status.DONE
+
+
 def history_hash(prev_hash: str, fields: dict) -> str:
     """Chain hash of one history row; the JSON form is fixed by tests."""
     payload = json.dumps(fields, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
