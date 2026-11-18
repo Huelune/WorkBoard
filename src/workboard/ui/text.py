@@ -82,6 +82,9 @@ def error_text(error: Exception) -> str:
     """What went wrong and what to do, in the person's words. Never the raw message:
     it is written for developers and an unexpected one may carry paths or values."""
     known = _REFUSALS.get(str(error))
+    row = getattr(error, "row", None)
+    if known and row:
+        return f"{row}번째 업무: {known}"
     if known:
         return known
     if isinstance(error, PermissionDenied):

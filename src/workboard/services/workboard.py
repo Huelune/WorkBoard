@@ -355,14 +355,19 @@ class WorkBoardService:
         due_date = validate_due_date(due_date)
         if not isinstance(items, list) or not items or not all(isinstance(item, dict) for item in items):
             raise ValidationError("at least one work item is required")
-        cleaned = [
-            (
-                clean_text(item.get("title"), "title", required=True),
-                clean_text(item.get("external_ref"), "external reference"),
-                clean_link(item.get("external_url"), "external link"),
-            )
-            for item in items
-        ]
+        cleaned = []
+        for number, item in enumerate(items, start=1):
+            try:
+                cleaned.append(
+                    (
+                        clean_text(item.get("title"), "title", required=True),
+                        clean_text(item.get("external_ref"), "external reference"),
+                        clean_link(item.get("external_url"), "external link"),
+                    )
+                )
+            except ValidationError as error:
+                error.row = number  # lets the screen say which line to fix
+                raise
         if scope_id is None or category_id is None:
             raise ValidationError("both grouping fields are required for new work")
         with self._write():

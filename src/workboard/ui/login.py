@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from workboard.domain import NotFound, PermissionDenied, ValidationError
 from workboard.services import WorkBoardService
+from workboard.ui.theme import tone
 
 RULE = "비밀번호는 8자 이상이고 ID와 달라야 합니다."
 
@@ -27,7 +28,7 @@ def _message() -> QLabel:
     label = QLabel()
     label.setTextFormat(Qt.TextFormat.PlainText)
     label.setWordWrap(True)
-    label.setStyleSheet("color: #e5534b;")
+    label.setStyleSheet(f"color: {tone('red', label.palette()).name()};")  # readable in both themes
     return label
 
 

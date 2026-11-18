@@ -31,6 +31,7 @@ from workboard.ui.manage_page import ManagePage
 from workboard.ui.pace_page import PacePage
 from workboard.ui.review_page import ReviewPage
 from workboard.ui.text import DEFAULT_LABELS, error_field, error_text
+from workboard.ui.theme import tone
 from workboard.ui.work_page import WorkPage
 
 PAGES = ["업무 목록", "내 업무", "확인 대기", "현황·속도", "관리"]
@@ -63,7 +64,8 @@ class MainWindow(QMainWindow):
         for widget in (self.scope_caption, self.scope, self.category_caption, self.category):
             filters.addWidget(widget)
         self.warning = QLabel("기록이 변경됨: 앱 밖에서 고친 흔적이 있습니다")
-        self.warning.setStyleSheet("color: #e5534b; font-weight: bold;")
+        self.warning.setStyleSheet(f"color: {tone('red', self.palette()).name()}; font-weight: bold;")
+        self.project_caption = QLabel("프로젝트")
         self.account = QToolButton()
         self.account.setText(actor)
         self.account.setToolTip("로그인한 사용자")
@@ -77,7 +79,7 @@ class MainWindow(QMainWindow):
         self.account.setMenu(account_menu)
 
         top = QHBoxLayout()
-        top.addWidget(QLabel("프로젝트"))
+        top.addWidget(self.project_caption)
         top.addWidget(self.project)
         top.addWidget(self.filters)
         top.addStretch(1)
@@ -148,7 +150,11 @@ class MainWindow(QMainWindow):
         self._show_filters()
 
     def _show_filters(self) -> None:
-        self.filters.setVisible(self.nav.currentRow() == WORK_INDEX and bool(self.project_id))
+        """Show each top control only where it does something: "my work" spans every project."""
+        page = self.nav.currentRow()
+        self.filters.setVisible(page == WORK_INDEX and bool(self.project_id))
+        self.project.setVisible(page != MINE_INDEX)
+        self.project_caption.setVisible(page != MINE_INDEX)
 
     def show_manage(self) -> None:
         self.nav.setCurrentRow(MANAGE_INDEX)
@@ -174,6 +180,16 @@ class MainWindow(QMainWindow):
     def refresh(self) -> None:
         projects = self.service.list_projects()
         self.records = {record["id"]: record for record in projects}
+        # Item names for every project (retired ones too): "my work" lists work from all of them,
+        # and old work still shows what it was filed under.
+        self.names = {
+            item["id"]: item["name"]
+            for record in projects
+            for item in (
+                self.service.list_scopes(record["id"], include_deleted=True)
+                + self.service.list_categories(record["id"], include_deleted=True)
+            )
+        }
         self._fill(self.project, projects, None)
         self._project_changed()
 
@@ -181,14 +197,6 @@ class MainWindow(QMainWindow):
         project = self.project_id
         scopes = self.service.list_scopes(project) if project else []
         categories = self.service.list_categories(project) if project else []
-        # Names include retired items so old work still shows what it was filed under.
-        named = (
-            self.service.list_scopes(project, include_deleted=True)
-            + self.service.list_categories(project, include_deleted=True)
-            if project
-            else []
-        )
-        self.names = {record["id"]: record["name"] for record in named}
         record = self.records.get(project)
         self.labels = (record["scope_label"], record["category_label"]) if record else DEFAULT_LABELS
         self.scope_caption.setText(self.labels[0])
@@ -326,8 +334,31 @@ class MainWindow(QMainWindow):
 
     # ----- dialogs (thin: collect values, then call an action above)
 
-    def _confirm(self, title: str, question: str) -> bool:
-        return QMessageBox.question(self, title, question) == QMessageBox.StandardButton.Yes
+    def _confirm(self, title: str, question: str, action: str) -> bool:
+        """Ask before something that is hard to undo. The buttons name the action, in Korean,
+        and the safe choice is the default."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(title)
+        box.setTextFormat(Qt.TextFormat.PlainText)  # the question can quote a title someone typed
+        box.setText(question)
+        go = box.addButton(action, QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(box.addButton("그만두기", QMessageBox.ButtonRole.RejectRole))
+        box.exec()
+        return box.clickedButton() is go
+
+    def closeEvent(self, event) -> None:  # noqa: ANN001, N802
+        pages = (self.work_page, self.mine_page)
+        if any(page.has_unsaved() for page in pages) and not self._confirm(
+            "닫기", "저장하지 않은 진행 입력이 있습니다. 저장하지 않고 닫을까요?", "저장하지 않고 닫기"
+        ):
+            event.ignore()
+            return
+        for page in pages:  # the person chose to drop them; a second close must not ask again
+            page.drafts.clear()
+            if page.form.assignment_id:
+                page.form.revert()
+        event.accept()
 
     def ask_new_project(self) -> None:
         name, accepted = QInputDialog.getText(self, "새 프로젝트", "프로젝트 이름")
@@ -368,7 +399,9 @@ class MainWindow(QMainWindow):
 
     def ask_make_editor(self, user_id: str | None) -> None:
         if user_id and self._confirm(
-            "편집자 지정", "이 구성원을 편집자로 지정할까요? 편집자는 업무 정의와 완료 확인을 할 수 있습니다."
+            "편집자 지정",
+            f"'{self.person(user_id)}' 구성원을 편집자로 지정할까요? 편집자는 업무 정의와 완료 확인을 할 수 있습니다.",
+            "편집자로 지정",
         ):
             self.add_editor(user_id)
 
@@ -381,26 +414,38 @@ class MainWindow(QMainWindow):
 
     def ask_delete_item(self, kind: str, item_id: str | None) -> None:
         if item_id and self._confirm(
-            "항목 삭제", "이 항목을 삭제할까요? 새 업무에서는 고를 수 없게 되고, 이미 등록된 업무에는 이름이 그대로 보입니다."
+            "항목 삭제",
+            f"'{self.names.get(item_id, '')}' 항목을 삭제할까요? 새 업무에서는 고를 수 없게 되고, 이미 등록된 업무에는 이름이 그대로 보입니다.",
+            "삭제",
         ):
             self.delete_item(kind, item_id)
 
     def ask_remove_member(self, user_id: str | None) -> None:
         if user_id and self._confirm(
-            "구성원 삭제", "이 구성원을 목록에서 뺄까요? 맡은 업무와 진행 기록은 그대로 남습니다."
+            "구성원 삭제",
+            f"'{self.person(user_id)}' 구성원을 목록에서 뺄까요? 맡은 업무와 진행 기록은 그대로 남습니다.",
+            "목록에서 빼기",
         ):
             self.remove_member(user_id)
 
     def ask_remove_editor(self, user_id: str | None) -> None:
-        if user_id and self._confirm("편집자 해제", "이 구성원의 편집자 역할을 해제할까요? 구성원으로는 남습니다."):
+        if user_id and self._confirm(
+            "편집자 해제", f"'{self.person(user_id)}' 구성원의 편집자 역할을 해제할까요? 구성원으로는 남습니다.", "역할 해제"
+        ):
             self.remove_editor(user_id)
 
     def ask_delete(self, row: dict | None) -> None:
         if row and self._confirm(
-            "업무 삭제", "이 업무를 삭제할까요? 목록과 집계에서 빠지고 화면에서 되돌릴 수 없습니다. 기록은 남습니다."
+            "업무 삭제",
+            f"'{row['title']}' 업무를 삭제할까요? 목록과 집계에서 빠지고 화면에서 되돌릴 수 없습니다. 기록은 남습니다.",
+            "삭제",
         ):
             self.delete_work_item(row["work_item_id"])
 
     def ask_cancel(self, row: dict | None) -> None:
-        if row and self._confirm("배정 취소", "이 배정을 취소할까요? 진행 기록은 남지만 목록과 집계에서 빠집니다."):
+        if row and self._confirm(
+            "배정 취소",
+            f"'{row['title']}' 업무의 '{self.person(row['assignee_id'])}' 배정을 취소할까요? 진행 기록은 남지만 목록과 집계에서 빠집니다.",
+            "배정 취소",
+        ):
             self.cancel_assignment(row["assignment_id"])

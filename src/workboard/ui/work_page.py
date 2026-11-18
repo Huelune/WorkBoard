@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor, QPalette
+from PySide6.QtGui import QBrush, QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,7 +27,8 @@ from PySide6.QtWidgets import (
 
 from workboard.domain import is_overdue, is_web_link
 from workboard.ui.dialogs import ProgressForm
-from workboard.ui.text import attention, detail_html, group_notes, state_label
+from workboard.ui.text import DEFAULT_LABELS, attention, detail_html, group_notes, state_label
+from workboard.ui.theme import tone
 
 if TYPE_CHECKING:
     from workboard.ui.main_window import MainWindow
@@ -38,20 +39,6 @@ PROGRESS_COLUMN = 2
 NOTE_COLUMN = 3
 LINK_COLUMN = 5
 FIELD_COLUMN = 6
-# (light theme, dark theme) pairs; the app follows the system theme.
-_TONES = {
-    "red": ("#b3261e", "#ff8a80"),
-    "amber": ("#9a6700", "#ffc857"),
-    "green": ("#1a7f37", "#7ee787"),
-    "track": ("#d8dde3", "#4a4f57"),
-    "bar": ("#3b82c4", "#5aa2e6"),
-}
-
-
-def tone(name: str, palette: QPalette) -> QColor:
-    dark = palette.window().color().lightness() < 128
-    return QColor(_TONES[name][dark])
-
 
 class RowDelegate(QStyledItemDelegate):
     """On a selected row every cell uses the selection's own text colour, so a status colour
@@ -98,6 +85,8 @@ class WorkPage(QWidget):
         self.win, self.mine = window, mine
         self.rows: dict[str, dict] = {}
         self.folded: set[object] = set()  # groups the user closed; everything else stays open
+        self.drafts: dict[str, dict] = {}  # typed but not saved, kept per assignment while the app is open
+        self._saving = False
         self._empty_action: Callable[[], object] | None = None
 
         self.group = QComboBox()
@@ -145,6 +134,17 @@ class WorkPage(QWidget):
         side_layout.setContentsMargins(8, 0, 0, 0)
         side_layout.addWidget(self.form)
         side_layout.addWidget(self.detail, 1)
+        # What an editor may do to the selected row, in plain sight as well as on right-click.
+        self.due_button = QPushButton("기한 변경")
+        self.cancel_button = QPushButton("배정 취소")
+        self.delete_button = QPushButton("업무 삭제")
+        self.editor_bar = QWidget()
+        editor_layout = QHBoxLayout(self.editor_bar)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        for button in (self.due_button, self.cancel_button, self.delete_button):
+            editor_layout.addWidget(button)
+        editor_layout.addStretch(1)
+        side_layout.addWidget(self.editor_bar)
         self.side.setMinimumWidth(320)
         self.side.hide()  # nothing selected yet: the list gets the whole width
         splitter = QSplitter()
@@ -183,6 +183,9 @@ class WorkPage(QWidget):
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.itemClicked.connect(self._clicked)
         self.add_button.clicked.connect(self.win.ask_work_item)
+        self.due_button.clicked.connect(lambda: self.win.ask_due_date(self.current_row()))
+        self.cancel_button.clicked.connect(lambda: self.win.ask_cancel(self.current_row()))
+        self.delete_button.clicked.connect(lambda: self.win.ask_delete(self.current_row()))
         self.empty_button.clicked.connect(lambda: self._empty_action and self._empty_action())
 
     # ----- the selected row
@@ -206,23 +209,53 @@ class WorkPage(QWidget):
         if not self.form.isHidden():
             self.form.status.setFocus()
 
+    def _keep_draft(self) -> None:
+        """Remember what is typed for the assignment in the form, so leaving the row loses nothing."""
+        assignment_id = self.form.assignment_id
+        if self._saving or not assignment_id:
+            return
+        if self.form.is_dirty():
+            self.drafts[assignment_id] = self.form.values()
+        else:
+            self.drafts.pop(assignment_id, None)
+
+    def has_unsaved(self) -> bool:
+        self._keep_draft()
+        return bool(self.drafts)
+
     def _save(self, assignment_id: str, values: dict) -> str | None:
-        error, field = self.win.attempt_progress(assignment_id, values)
+        self.drafts.pop(assignment_id, None)
+        self._saving = True  # the redraw after a successful save must show the saved values
+        try:
+            error, field = self.win.attempt_progress(assignment_id, values)
+        finally:
+            self._saving = False
         if error:
             self.form.point_at(field)
+        else:
+            self.tree.setFocus()  # back to the list, on the same row, ready for the next one
         return error
 
     def _show_detail(self, item: QTreeWidgetItem | None, _previous: object = None) -> None:
+        self._keep_draft()
         row = self.rows.get(item.data(0, ROLE)) if item else None
         self.side.setVisible(bool(row))
         if not row:
             return
-        own = row["assignment_id"] in self.rows and row["assignee_id"] == self.win.actor
+        own = row["assignee_id"] == self.win.actor
         self.form.setVisible(own)
         if own:
-            self.form.load(row)
+            self.form.load(row, self.drafts.get(row["assignment_id"]))
+        else:
+            self.form.assignment_id = None
+        self.editor_bar.setVisible(self.win.service.is_editor(self.win.actor, row["project_id"]))
         detail = self.win.service.assignment_detail(row["assignment_id"])
-        self.detail.setHtml(detail_html(detail, self.win.names, self.win.person, self.win.labels))
+        self.detail.setHtml(detail_html(detail, self.win.names, self.win.person, self._labels(row)))
+
+    def _labels(self, row: dict) -> tuple[str, str]:
+        """The two field names of the row's own project; "my work" can span several."""
+        record = self.win.records.get(row["project_id"])
+        return (record["scope_label"], record["category_label"]) if record else DEFAULT_LABELS
 
     # ----- right-click and links
 
@@ -306,12 +339,12 @@ class WorkPage(QWidget):
 
     def reload(self) -> None:
         window = self.win
+        self._keep_draft()
         selected = self.tree.currentItem().data(0, ROLE) if self.tree.currentItem() else None
         self.tree.clear()
         self.rows = {}
         today, project = window.today(), window.project_id
         self.group.setItemText(1, f"{window.labels[1]}별")
-        self.tree.headerItem().setText(FIELD_COLUMN, window.labels[1])
         red, amber, green = (tone(name, self.palette()) for name in ("red", "amber", "green"))
         self.add_button.setEnabled(bool(project) and window.service.is_member(window.actor, project))
         if self.mine:
@@ -334,6 +367,10 @@ class WorkPage(QWidget):
         # Hide the owner column when it would say the same thing on every row: under a
         # per-assignee heading, or on "my work" when all of it is in one project.
         one_project = len({row["project_id"] for row in rows}) == 1
+        # The last column is named in the project's own word; across several projects no one word fits.
+        self.tree.headerItem().setText(
+            FIELD_COLUMN, self._labels(rows[0])[1] if self.mine and one_project else "분류" if self.mine else window.labels[1]
+        )
         self.tree.setColumnHidden(OWNER_COLUMN, one_project if self.mine else by == "assignee")
         parents: dict[object, QTreeWidgetItem] = {}
         if by:
@@ -359,6 +396,8 @@ class WorkPage(QWidget):
         for row in shown:
             overdue = is_overdue(row["due_date"], row["status"], today)
             note = state_label(row) + (" · 기한 초과" if overdue else "")
+            if row["assignment_id"] in self.drafts:
+                note += " · 저장 안 됨"
             owner = (
                 window.records.get(row["project_id"], {}).get("name", "")
                 if self.mine

@@ -254,6 +254,51 @@ class WorkListTests(UiCase):
         self.assertEqual(member.work_page.tree.topLevelItem(0).text(0), "김 담당 · 4건")
         self.assertFalse(self.window("stranger").work_page.add_button.isEnabled())
 
+    def test_editor_actions_are_buttons_and_confirmations_name_the_thing(self) -> None:
+        self.page.group.setCurrentIndex(2)
+        self.page.select(self.ids["a5"])
+        self.assertFalse(self.page.editor_bar.isHidden())
+        asked: list[tuple[str, str, str]] = []
+        self.win._confirm = lambda *words: asked.append(words) or False  # type: ignore[method-assign]
+        self.page.delete_button.click()
+        self.page.cancel_button.click()
+        self.assertEqual([words[2] for words in asked], ["삭제", "배정 취소"])  # the button names the action
+        self.assertIn("'a5' 업무를 삭제할까요?", asked[0][1])
+        self.assertIn("'a5' 업무의 'u2' 배정", asked[1][1])
+        self.assertIn(self.ids["a5"], self.page.rows)  # declined: nothing happened
+        self.win._confirm = lambda *words: True  # type: ignore[method-assign]
+        self.page.select(self.ids["a5"])
+        self.page.delete_button.click()
+        self.assertNotIn(self.ids["a5"], self.page.rows)
+        outsider = self.window("u1").work_page
+        outsider.group.setCurrentIndex(2)
+        outsider.select(self.ids["a4"])
+        self.assertTrue(outsider.editor_bar.isHidden())
+
+    def test_problem_text_is_readable_in_both_themes(self) -> None:
+        from PySide6.QtGui import QColor, QPalette
+
+        from workboard.ui.theme import tone
+
+        def contrast(first: QColor, second: QColor) -> float:
+            def luminance(color: QColor) -> float:
+                parts = [
+                    c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+                    for c in (color.redF(), color.greenF(), color.blueF())
+                ]
+                return 0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2]
+
+            lighter, darker = sorted((luminance(first), luminance(second)), reverse=True)
+            return (lighter + 0.05) / (darker + 0.05)
+
+        for background in ("#f3f3f3", "#ffffff", "#202020", "#2b2b2b"):
+            palette = QPalette()
+            palette.setColor(QPalette.ColorRole.Window, QColor(background))
+            for name in ("red", "amber", "green"):
+                with self.subTest(background=background, name=name):
+                    self.assertGreaterEqual(contrast(tone(name, palette), QColor(background)), 4.5)
+        self.assertIn(tone("red", self.page.form.message.palette()).name(), self.page.form.message.styleSheet())
+
     def test_non_editor_cannot_manage(self) -> None:
         window = self.window("u1")
         self.assertFalse(window.manage_page.rename_button.isEnabled())
@@ -345,7 +390,14 @@ class DialogTests(UiCase):
         dialog.accept()
         self.assertNotEqual(dialog.result(), QDialog.DialogCode.Accepted)
         self.assertFalse(dialog.message.isHidden())
-        self.assertEqual(dialog.message.text(), "링크는 http:// 또는 https://로 시작해야 합니다.")
+        self.assertEqual(dialog.message.text(), "1번째 업무: 링크는 http:// 또는 https://로 시작해야 합니다.")
+        dialog.rows[0][3].clear()
+        dialog.rows[1][3].setText("abc")
+        dialog.accept()
+        self.assertTrue(dialog.message.text().startswith("2번째 업무: "))  # says which line to fix
+        dialog.rows[1][3].clear()
+        dialog.rows[0][3].setText("ftp://example.test/x")
+        dialog.accept()
         self.assertEqual([row[1].text() for row in dialog.rows], ["링크가 잘못된 업무", "둘째 업무"])
         self.assertEqual((len(self.svc.list_assignments(self.project)), self.errors), (before, []))
         dialog.rows[0][3].setText("https://example.test/x")
@@ -402,11 +454,112 @@ class ProgressTests(UiCase):
         self.assertEqual(visible(), ["hold_reason"])
         form.status.setCurrentIndex(form.status.findData("done"))
         self.assertEqual(visible(), ["evidence_ref", "evidence_note", "result"])
-        self.assertEqual((form.progress.value(), form.progress.isEnabled()), (100, False))
+        self.assertEqual(form.progress.value(), 100)
         form.status.setCurrentIndex(form.status.findData("in_progress"))
-        self.assertEqual((form.progress.value(), form.progress.isEnabled()), (99, True))
+        self.assertEqual(form.progress.value(), 99)
         form.status.setCurrentIndex(form.status.findData("not_started"))
         self.assertEqual((form.progress.value(), visible()), (0, []))
+
+    def test_typing_a_number_moves_the_status_with_it(self) -> None:
+        form = self.window("u1").mine_page.form
+        form.status.setCurrentIndex(form.status.findData("not_started"))
+        self.assertTrue(form.progress.isEnabled())  # no need to change the status first
+        form.progress.setValue(30)
+        self.assertEqual(form.status.currentData(), "in_progress")
+        form.progress.setValue(100)
+        self.assertEqual(form.status.currentData(), "done")
+        self.assertTrue(form.form.isRowVisible(form.evidence_ref))
+        form.progress.setValue(80)
+        self.assertEqual(form.status.currentData(), "in_progress")
+        form.status.setCurrentIndex(form.status.findData("on_hold"))
+        form.progress.setValue(40)
+        self.assertEqual(form.status.currentData(), "on_hold")  # a hold keeps its status below 100
+        form.progress.setValue(0)
+        self.assertEqual(form.status.currentData(), "on_hold")
+
+    def test_enter_in_the_number_saves(self) -> None:
+        window = self.window("u1")
+        page, target = window.mine_page, self.ids["<b>굵게</b>"]
+        page.form.progress.setValue(70)
+        page.form.progress.lineEdit().returnPressed.emit()
+        self.assertEqual(self.svc.assignment_detail(target)["row"]["progress"], 70)
+        self.assertEqual(window.statusBar().currentMessage(), SAVED)
+        self.assertEqual(page.current_row()["assignment_id"], target)
+        self.assertTrue(page.form.unsaved.isHidden())
+
+    def test_typed_input_survives_leaving_the_row_until_saved_or_reverted(self) -> None:
+        """Regression: clicking another row, searching or toggling a filter silently reset the form."""
+        window = self.window("u1")
+        page, form = window.mine_page, window.mine_page.form
+        target, other = self.ids["<b>굵게</b>"], self.ids["a2"]
+        self.assertTrue(form.unsaved.isHidden())
+        self.assertFalse(page.has_unsaved())
+        form.status.setCurrentIndex(form.status.findData("done"))
+        form.evidence_note.setText("시험 12건 통과")
+        self.assertFalse(form.unsaved.isHidden())
+
+        page.select(other)
+        self.assertEqual(form.evidence_ref.text(), "REF-2")  # the other row shows its own saved values
+        self.assertTrue(form.unsaved.isHidden())
+        page.search.setText("u1")
+        page.hide_confirmed.setChecked(False)
+        window.refresh()
+        marked = {i.text(0): i.text(NOTE_COLUMN) for i in self.tops(page.tree)}
+        self.assertIn("저장 안 됨", marked["<b>굵게</b>"])
+        self.assertNotIn("저장 안 됨", marked["a2"])
+        self.assertTrue(page.has_unsaved())
+
+        page.select(target)
+        self.assertEqual((form.status.currentData(), form.evidence_note.text()), ("done", "시험 12건 통과"))
+        self.assertFalse(form.unsaved.isHidden())
+        self.assertEqual(self.svc.assignment_detail(target)["row"]["status"], "in_progress")  # nothing saved yet
+
+        form.evidence_ref.setText(PROOF)
+        self.assertTrue(form.save())
+        self.assertFalse(page.has_unsaved())
+        self.assertTrue(form.unsaved.isHidden())
+        self.assertNotIn("저장 안 됨", page.tree.currentItem().text(NOTE_COLUMN))
+
+        form.evidence_note.setText("고치다 만 글")
+        form.revert()
+        self.assertEqual(form.evidence_note.text(), "시험 12건 통과")
+        self.assertFalse(page.has_unsaved())
+
+    def test_closing_with_unsaved_input_asks_first(self) -> None:
+        window = self.window("u1")
+        asked: list[tuple[str, str, str]] = []
+        window._confirm = lambda *words: asked.append(words) or False  # type: ignore[method-assign]
+        self.assertTrue(window.close())  # nothing typed: closes without a question
+        window.show()
+        window.mine_page.form.progress.setValue(60)
+        self.assertFalse(window.close())
+        self.assertEqual(asked[-1][2], "저장하지 않고 닫기")
+        self.assertEqual(window.mine_page.form.progress.value(), 60)
+        window._confirm = lambda *words: True  # type: ignore[method-assign]
+        self.assertTrue(window.close())
+        self.assertFalse(window.mine_page.has_unsaved())
+
+    def test_my_work_uses_each_projects_own_names(self) -> None:
+        """Regression: work from another project showed a blank field and the wrong field names."""
+        other = self.svc.create_project("ed1", "P2")
+        self.svc.set_labels("ed1", other, "릴리스", "영역")
+        scope = self.svc.create_scope("ed1", other, "R1")
+        category = self.svc.create_category("ed1", other, "문서")
+        (extra,) = self.svc.add_work_items("ed1", other, [{"title": "다른 프로젝트 일"}], "u1", scope_id=scope, category_id=category)
+        window = self.window("u1")
+        page = window.mine_page
+        self.assertTrue(window.project.isHidden())  # it would not filter anything here
+        self.assertFalse(page.tree.isColumnHidden(OWNER_COLUMN))
+        fields = {i.text(0): (i.text(OWNER_COLUMN), i.text(6)) for i in self.tops(page.tree)}
+        self.assertEqual(fields["다른 프로젝트 일"], ("P2", "문서"))
+        self.assertEqual(fields["a2"], ("P1", "UNIT"))
+        self.assertEqual(page.tree.headerItem().text(6), "분류")
+        page.select(extra)
+        detail = page.detail.toPlainText()
+        self.assertIn("릴리스 R1", detail)
+        self.assertIn("영역 문서", detail)
+        window.nav.setCurrentRow(WORK_INDEX)
+        self.assertFalse(window.project.isHidden())
 
     def test_a_refused_save_keeps_what_was_typed_and_says_which_field(self) -> None:
         """Regression: a refusal used to close the form, lose the input and list every rule."""
