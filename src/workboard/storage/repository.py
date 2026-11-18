@@ -57,6 +57,11 @@ class Repository:
     def set_field(self, table: str, record_id: str, column: str, value: object) -> None:
         self._conn.execute(f"UPDATE {table} SET {column} = ? WHERE id = ?", (value, record_id))
 
+    def listing(self, table: str, project_id: str | None = None, order: str = "rowid") -> list[dict]:
+        if project_id is None:
+            return self.all(f"SELECT * FROM {table} ORDER BY {order}")
+        return self.all(f"SELECT * FROM {table} WHERE project_id = ? ORDER BY {order}", (project_id,))
+
     def is_editor(self, project_id: str, user_id: str) -> bool:
         return (
             self.one(
