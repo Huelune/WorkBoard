@@ -25,8 +25,9 @@ def load_settings(path: Path | None = None, *, home: Path | None = None, login: 
 
     The user ID defaults to the OS login name (stage 0 assumption about user identity).
     """
+    # utf-8-sig: Notepad and Windows PowerShell save UTF-8 with a byte order mark.
     path = path or default_config_path()
-    data = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    data = tomllib.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else {}
     db_path = str(data.get("storage", {}).get("local_db_path") or "").strip()
     user_id = str(data.get("user", {}).get("id") or "").strip()
     return Settings(

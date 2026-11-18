@@ -1,0 +1,45 @@
+# 직접 실행해야 하는 것
+
+결과를 붙여 주면 해당 절은 지운다.
+
+## 1. 화면을 직접 눌러 보기
+
+### 왜
+
+자동 테스트와 캡처로는 창이 뜨고 숫자가 맞는 것까지만 확인했다. 한글 입력, 대화상자 흐름, 글자 크기, 키보드 이동은 사람이 눌러 봐야 안다.
+
+시험용 설정을 따로 만들어 실행한다. 사용자 ID가 `tester`로 고정되고 DB도 임시 폴더에 생기므로, 화면을 캡처해도 실제 계정이나 업무가 찍히지 않는다.
+
+### 실행
+
+저장소 폴더 안의 PowerShell에서 그대로 붙여 넣는다.
+
+```powershell
+$root = git rev-parse --show-toplevel
+$demo = Join-Path $env:TEMP "workboard-demo"
+New-Item -ItemType Directory -Force $demo | Out-Null
+$db = (Join-Path $demo "demo.db") -replace '\\', '/'
+Set-Content -Encoding utf8 (Join-Path $demo "config.toml") "[storage]`nlocal_db_path = '$db'`n[user]`nid = 'tester'"
+$env:WORKBOARD_CONFIG = Join-Path $demo "config.toml"
+$env:PYTHONPATH = Join-Path $root "src"
+& (Join-Path $root ".venv\Scripts\python.exe") -m workboard
+```
+
+### 확인할 것
+
+지어낸 이름만 입력한다(예: 프로젝트 "시험", 업무 "예시 1").
+
+1. "새 프로젝트"로 프로젝트를 만든다. "관리"에서 분류 하나와 편집자 `tester2`를 추가한다.
+2. "업무 추가"로 담당자 `tester`인 업무 세 개를 만든다. 기한은 하나를 지난 날짜로 넣는다.
+3. "내 업무"에서 업무를 두 번 눌러 진행 입력 창을 연다. 상태를 완료로 바꾸면 진행도가 100으로 고정되고 근거 칸이 켜지는지 본다.
+4. 근거를 비우고 저장하면 안내가 뜨고 저장되지 않는지 본다. 근거를 넣으면 "확인 대기"가 되는지 본다.
+5. "업무 목록"에서 담당자 줄을 펼치고, 묶기를 분류별과 묶지 않음으로 바꿔 본다. 검색 칸에 한글을 입력해 본다.
+6. "현황·속도"의 두 탭을 열어 본다.
+
+완료 확인은 본인 업무를 본인이 할 수 없어서 이 시험에서는 "확인 대기"가 비어 있는 것이 정상이다.
+
+### 돌려줄 것
+
+- "업무 목록" 화면 캡처 한 장(담당자 줄을 펼친 상태).
+- 이상했던 점은 화면 이름과 무엇이 어땠는지를 말로 적는다. 오류 창이 떴다면 그 문구를 적는다.
+- 글자가 작거나 잘리는 곳, 한글 입력이 이상한 곳이 있었는지.

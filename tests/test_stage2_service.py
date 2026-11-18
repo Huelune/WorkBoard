@@ -53,6 +53,12 @@ class SettingsTests(unittest.TestCase):
             settings = load_settings(path, home=Path("H"), login="me")
         self.assertEqual((settings.db_path, settings.user_id), (Path("D:/data/wb.db"), "kim"))
 
+    def test_file_saved_with_a_byte_order_mark_is_read(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config.toml"
+            path.write_text("[user]\nid = 'kim'\n", encoding="utf-8-sig")
+            self.assertEqual(load_settings(path, home=Path("H"), login="me").user_id, "kim")
+
     def test_blank_values_fall_back(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "config.toml"
