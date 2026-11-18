@@ -386,6 +386,12 @@ class MainWindow(QMainWindow):
             on_submit=lambda values: self.attempt(self._add_work_items(values)),
         ).exec()
 
+    def ask_import(self) -> None:
+        if self.project_id and self.service.is_editor(self.actor, self.project_id):
+            from workboard.ui.import_dialog import ImportDialog
+
+            ImportDialog(self).exec()
+
     def ask_due_date(self, row: dict | None) -> None:
         if not row:
             return

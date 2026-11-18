@@ -98,6 +98,7 @@ class WorkPage(QWidget):
         self.search.setPlaceholderText("검색 (할 일, 담당자)")
         self.search.setClearButtonEnabled(True)
         self.add_button = QPushButton("업무 추가")
+        self.import_button = QPushButton("엑셀에서 가져오기")
 
         bar = QHBoxLayout()
         if not mine:
@@ -106,6 +107,7 @@ class WorkPage(QWidget):
         bar.addWidget(self.hide_confirmed)
         bar.addWidget(self.search, 1)
         if not mine:
+            bar.addWidget(self.import_button)
             bar.addWidget(self.add_button)
 
         self.tree = QTreeWidget()
@@ -183,6 +185,7 @@ class WorkPage(QWidget):
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.itemClicked.connect(self._clicked)
         self.add_button.clicked.connect(self.win.ask_work_item)
+        self.import_button.clicked.connect(self.win.ask_import)
         self.due_button.clicked.connect(lambda: self.win.ask_due_date(self.current_row()))
         self.cancel_button.clicked.connect(lambda: self.win.ask_cancel(self.current_row()))
         self.delete_button.clicked.connect(lambda: self.win.ask_delete(self.current_row()))
@@ -347,6 +350,7 @@ class WorkPage(QWidget):
         self.group.setItemText(1, f"{window.labels[1]}별")
         red, amber, green = (tone(name, self.palette()) for name in ("red", "amber", "green"))
         self.add_button.setEnabled(bool(project) and window.service.is_member(window.actor, project))
+        self.import_button.setEnabled(bool(project) and window.service.is_editor(window.actor, project))
         if self.mine:
             rows = window.service.my_assignments(window.actor)
         elif project:
