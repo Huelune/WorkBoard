@@ -89,6 +89,17 @@ class Repository:
                 (display_name, project_id, user_id),
             )
 
+    def import_mapping(self, project_id: str) -> str | None:
+        row = self.one("SELECT mapping FROM import_mapping WHERE project_id = ?", (project_id,))
+        return row["mapping"] if row else None
+
+    def save_import_mapping(self, project_id: str, mapping: str) -> None:
+        self._conn.execute(
+            "INSERT INTO import_mapping (project_id, mapping) VALUES (?, ?)"
+            " ON CONFLICT(project_id) DO UPDATE SET mapping = excluded.mapping",
+            (project_id, mapping),
+        )
+
     def get_account(self, user_id: str) -> dict | None:
         return self.one("SELECT * FROM account WHERE user_id = ?", (user_id,))
 
