@@ -192,7 +192,8 @@ class WorkBoardService:
     # shortcut: no lockout after repeated wrong passwords, add one if a shared PC makes guessing realistic.
     # Nobody can set another person's password, editors included: whoever could would be able to log in
     # as an assignee and write their progress, or take over an account by first adding it as a member.
-    # A forgotten password means a new account. The must_change column is unused and kept for old files.
+    # A forgotten password means a new account. must_change is only ever set in files from the short time
+    # resets existed; check_login refuses those accounts.
 
     def has_accounts(self) -> bool:
         return self._repo.account_count() > 0
@@ -230,7 +231,9 @@ class WorkBoardService:
         """
         account = self._repo.get_account(user_id.strip()) if isinstance(user_id, str) else None
         matches = verify_password(password, account["password_hash"] if account else DUMMY_HASH)
-        if not (account and matches):
+        # must_change marks a password someone else set while resets briefly existed. That person
+        # still knows it, so the account stays shut; its owner signs up again under a new ID.
+        if not (account and matches) or account["must_change"]:
             raise PermissionDenied("wrong ID or password")
 
     def change_password(self, user_id: str, old_password: str, new_password: str) -> None:

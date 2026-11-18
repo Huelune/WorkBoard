@@ -95,6 +95,16 @@ class AccountTests(AccountCase):
             self.svc.change_password("victim", TEMP, OTHER)  # only the current password opens it
         self.svc.check_login("victim", GOOD)
 
+    def test_account_left_with_a_password_someone_else_set_stays_shut(self) -> None:
+        """Regression: a temporary password from the removed reset feature must not become a normal one."""
+        self.svc.create_account("kim", GOOD)
+        self.conn.execute("UPDATE account SET must_change = 1 WHERE user_id = 'kim'")
+        self.conn.commit()
+        with self.assertRaises(PermissionDenied):
+            self.svc.check_login("kim", GOOD)
+        with self.assertRaises(PermissionDenied):
+            self.svc.change_password("kim", GOOD, OTHER)
+
     def test_an_id_a_project_already_trusts_cannot_be_claimed_by_signing_up(self) -> None:
         """Regression: anyone could sign up as an existing editor or member that had no account yet."""
         project = self.svc.create_project("ed1", "P")
