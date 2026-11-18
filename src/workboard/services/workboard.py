@@ -151,8 +151,11 @@ class WorkBoardService:
 
     def _require_editor(self, actor: str, project_id: str) -> None:
         self._get("project", project_id)
-        if not self._repo.is_editor(project_id, actor):
+        if not self._is_editor(project_id, actor):
             raise PermissionDenied("only a project editor may change definitions")
+
+    def _is_editor(self, project_id: str, actor: str) -> bool:
+        return isinstance(actor, str) and self._repo.is_editor(project_id, actor)
 
     def _in_project(self, table: str, record_id: str | None, project_id: str) -> None:
         if record_id is not None and self._get(table, record_id)["project_id"] != project_id:
@@ -168,6 +171,7 @@ class WorkBoardService:
     def create_project(self, actor: str, name: str, description: str = "") -> str:
         actor = clean_text(actor, "actor", required=True)
         name = clean_text(name, "name", required=True)
+        description = clean_text(description, "description")
         project_id = str(uuid4())
         with self._write():
             now = self._now()
@@ -189,6 +193,7 @@ class WorkBoardService:
         self, actor: str, project_id: str, name: str, kind: str = "", parent_id: str | None = None
     ) -> str:
         name = clean_text(name, "name", required=True)
+        kind = clean_text(kind, "kind")
         with self._write():
             self._require_editor(actor, project_id)
             self._in_project("scope", parent_id, project_id)
@@ -196,6 +201,8 @@ class WorkBoardService:
 
     def create_category(self, actor: str, project_id: str, name: str, position: int = 0) -> str:
         name = clean_text(name, "name", required=True)
+        if type(position) is not int:
+            raise ValidationError("position must be an integer")
         with self._write():
             self._require_editor(actor, project_id)
             return self._define("category", project_id, str(uuid4()), name=name, position=position)
@@ -258,6 +265,8 @@ class WorkBoardService:
         with self._write():
             assignment = self._assignment(assignment_id)
             self._require_editor(actor, assignment["project_id"])
+            if column == "due_date" and (assignment["cancelled"] or assignment["deleted"]):
+                raise ValidationError("assignment is cancelled or its work item is deleted")
             self._repo.set_field("assignment", assignment_id, column, value)
             self._repo.mark_dirty("definition", assignment["project_id"], "", self._now())
 
@@ -333,7 +342,7 @@ class WorkBoardService:
         with self._write():
             assignment = self._assignment(assignment_id)
             project_id = assignment["project_id"]
-            if not self._repo.is_editor(project_id, actor):
+            if not self._is_editor(project_id, actor):
                 raise PermissionDenied("only a project editor may review a completion")
             if assignment["assignee_id"] == actor:
                 raise PermissionDenied("you may not review your own work")
@@ -372,10 +381,14 @@ class WorkBoardService:
     def list_projects(self) -> list[dict]:
         return self._repo.listing("project")
 
+    # A blank or unknown project is NotFound, so it can never widen a listing to every project.
+
     def list_scopes(self, project_id: str) -> list[dict]:
+        self._get("project", project_id)
         return self._repo.listing("scope", project_id)
 
     def list_categories(self, project_id: str) -> list[dict]:
+        self._get("project", project_id)
         return self._repo.listing("category", project_id, "position, rowid")
 
     def list_assignments(
@@ -385,12 +398,13 @@ class WorkBoardService:
         category_id: str | None = None,
         assignee_id: str | None = None,
     ) -> list[dict]:
+        self._get("project", project_id)
         return self._rows(
             project_id=project_id, scope_id=scope_id, category_id=category_id, assignee_id=assignee_id
         )
 
     def my_assignments(self, actor: str) -> list[dict]:
-        return self._rows(assignee_id=actor)
+        return self._rows(assignee_id=clean_text(actor, "actor", required=True))
 
     def assignment_detail(self, assignment_id: str) -> dict:
         rows = self._rows(assignment_id=assignment_id) if isinstance(assignment_id, str) else []
@@ -404,6 +418,7 @@ class WorkBoardService:
 
     def pending_reviews(self, actor: str, project_id: str) -> list[dict]:
         """Completion reports waiting for review, without the actor's own work."""
+        self._get("project", project_id)
         return [
             row
             for row in self._rows(project_id=project_id)
@@ -414,6 +429,7 @@ class WorkBoardService:
         """One line per assignee or category. average_progress is self-reported; trust confirmed."""
         if by not in ("assignee", "category"):
             raise ValidationError("group by assignee or category")
+        self._get("project", project_id)
         today = _today(today)
         return [
             {
@@ -443,6 +459,8 @@ class WorkBoardService:
     def assignee_pace(self, start: datetime, end: datetime, project_id: str | None = None) -> list[dict]:
         """Per-assignee pace in one project, or across every project in this local database."""
         period = _Period(start, end)
+        if project_id is not None:
+            self._get("project", project_id)
         rejected: dict[str, int] = {}
         for row in self._repo.rejected_rows(project_id):
             if period.bucket(row["reviewed_at"]) is not None:
