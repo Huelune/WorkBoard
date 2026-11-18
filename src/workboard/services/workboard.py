@@ -31,20 +31,33 @@ from workboard.domain import (
     validate_progress,
 )
 from workboard.storage import Repository
+from workboard.storage.database import APPEND_ONLY_TABLES
 
-_HASHED = (
-    "id",
-    "assignment_id",
-    "project_id",
-    "author_id",
-    "recorded_at",
-    "status",
-    "progress",
-    "result",
-    "hold_reason",
-    "evidence_ref",
-    "evidence_note",
-)
+# Columns covered by each chain's hash; changing these invalidates existing chains.
+_HASHED = {
+    "progress_history": (
+        "id",
+        "assignment_id",
+        "project_id",
+        "author_id",
+        "recorded_at",
+        "status",
+        "progress",
+        "result",
+        "hold_reason",
+        "evidence_ref",
+        "evidence_note",
+    ),
+    "completion_review": (
+        "id",
+        "history_id",
+        "project_id",
+        "reviewer_id",
+        "decision",
+        "reason",
+        "reviewed_at",
+    ),
+}
 _NOT_STARTED = asdict(ProgressValues(Status.NOT_STARTED.value, 0))
 _WEEK = timedelta(days=7)
 
@@ -316,22 +329,66 @@ class WorkBoardService:
                 "recorded_at": now,
                 **values,
             }
-            prev_hash = self._repo.last_hash(project_id, actor)
-            self._repo.insert(
-                "progress_history", **fields, prev_hash=prev_hash, hash=history_hash(prev_hash, fields)
-            )
+            self._append("progress_history", "author_id", fields)
             self._repo.mark_dirty("progress", project_id, actor, now)
             return True
 
     def verify_history(self, project_id: str, author_id: str) -> bool:
         """True when the author's history chain in the project is intact."""
+        return self._chain_intact("progress_history", "author_id", project_id, author_id)
+
+    def verify_reviews(self, project_id: str, reviewer_id: str) -> bool:
+        """True when the reviewer's review chain in the project is intact."""
+        return self._chain_intact("completion_review", "reviewer_id", project_id, reviewer_id)
+
+    def _append(self, table: str, owner_column: str, fields: dict) -> None:
+        """Insert one row at the end of its (project, owner) hash chain."""
+        prev_hash = self._repo.last_hash(table, owner_column, fields["project_id"], fields[owner_column])
+        self._repo.insert(table, **fields, prev_hash=prev_hash, hash=history_hash(prev_hash, fields))
+
+    def _chain_intact(self, table: str, owner_column: str, project_id: str, owner_id: str) -> bool:
         prev_hash = ""
-        for row in self._repo.chain(project_id, author_id):
-            fields = {key: row[key] for key in _HASHED}
+        for row in self._repo.chain(table, owner_column, project_id, owner_id):
+            fields = {key: row[key] for key in _HASHED[table]}
             if row["prev_hash"] != prev_hash or row["hash"] != history_hash(prev_hash, fields):
                 return False
             prev_hash = row["hash"]
         return True
+
+    def check_integrity(self) -> dict:
+        """Look for edits made to the database file outside the app. Run at startup.
+
+        Catches edited or removed rows inside a chain, a current value that no longer
+        matches its latest history row, and removed append-only triggers. It cannot catch
+        a chain rebuilt from scratch or rows cut from the end of a chain; other PCs catch
+        those once snapshots are shared.
+        """
+        broken = {
+            table: [
+                owner
+                for owner in self._repo.chain_owners(table, column)
+                if not self._chain_intact(table, column, owner["project_id"], owner["owner_id"])
+            ]
+            for table, column in (("progress_history", "author_id"), ("completion_review", "reviewer_id"))
+        }
+        current = {row["assignment_id"]: row for row in self._repo.listing("assignment_progress")}
+        latest = {row["assignment_id"]: row for row in self._repo.latest_history_rows()}
+        mismatches = sorted(
+            assignment_id
+            for assignment_id in current.keys() | latest.keys()
+            if assignment_id not in current
+            or assignment_id not in latest
+            or current[assignment_id]["updated_at"] != latest[assignment_id]["recorded_at"]
+            or any(current[assignment_id][key] != latest[assignment_id][key] for key in _NOT_STARTED)
+        )
+        protection_removed = self._repo.append_only_trigger_count() < 2 * len(APPEND_ONLY_TABLES)
+        return {
+            "ok": not (any(broken.values()) or mismatches or protection_removed),
+            "broken_history_chains": broken["progress_history"],
+            "broken_review_chains": broken["completion_review"],
+            "progress_mismatches": mismatches,
+            "protection_removed": protection_removed,
+        }
 
     # ----- completion review (another project editor)
 
@@ -355,14 +412,18 @@ class WorkBoardService:
             if not rows or rows[0]["status"] != Status.DONE:
                 raise ValidationError("only a completed assignment can be reviewed")
             now = self._now()
-            self._repo.insert(
+            self._append(
                 "completion_review",
-                id=str(uuid4()),
-                history_id=rows[0]["history_id"],
-                reviewer_id=actor,
-                decision=decision,
-                reason=reason,
-                reviewed_at=now,
+                "reviewer_id",
+                {
+                    "id": str(uuid4()),
+                    "history_id": rows[0]["history_id"],
+                    "project_id": project_id,
+                    "reviewer_id": actor,
+                    "decision": decision,
+                    "reason": reason,
+                    "reviewed_at": now,
+                },
             )
             self._repo.mark_dirty("review", project_id, actor, now)
 

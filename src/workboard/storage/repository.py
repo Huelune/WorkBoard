@@ -90,19 +90,38 @@ class Repository:
         self._conn.execute("DELETE FROM assignment_progress WHERE assignment_id = ?", (assignment_id,))
         self.insert("assignment_progress", assignment_id=assignment_id, updated_at=updated_at, **values)
 
-    def last_hash(self, project_id: str, author_id: str) -> str:
+    # Hash chains: one per (project, owner) in progress_history (owner column author_id)
+    # and in completion_review (owner column reviewer_id).
+
+    def last_hash(self, table: str, owner_column: str, project_id: str, owner_id: str) -> str:
         row = self.one(
-            "SELECT hash FROM progress_history WHERE project_id = ? AND author_id = ?"
-            " ORDER BY seq DESC LIMIT 1",
-            (project_id, author_id),
+            f"SELECT hash FROM {table} WHERE project_id = ? AND {owner_column} = ? ORDER BY seq DESC LIMIT 1",
+            (project_id, owner_id),
         )
         return row["hash"] if row else ""
 
-    def chain(self, project_id: str, author_id: str) -> list[dict]:
+    def chain(self, table: str, owner_column: str, project_id: str, owner_id: str) -> list[dict]:
         return self.all(
-            "SELECT * FROM progress_history WHERE project_id = ? AND author_id = ? ORDER BY seq",
-            (project_id, author_id),
+            f"SELECT * FROM {table} WHERE project_id = ? AND {owner_column} = ? ORDER BY seq",
+            (project_id, owner_id),
         )
+
+    def chain_owners(self, table: str, owner_column: str) -> list[dict]:
+        return self.all(
+            f"SELECT DISTINCT project_id, {owner_column} AS owner_id FROM {table} ORDER BY project_id, owner_id"
+        )
+
+    def latest_history_rows(self) -> list[dict]:
+        return self.all(
+            "SELECT h.* FROM progress_history h WHERE h.seq ="
+            " (SELECT MAX(seq) FROM progress_history WHERE assignment_id = h.assignment_id)"
+        )
+
+    def append_only_trigger_count(self) -> int:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
+            " AND (name LIKE '%\\_no\\_update' ESCAPE '\\' OR name LIKE '%\\_no\\_delete' ESCAPE '\\')"
+        ).fetchone()[0]
 
     def history(self, assignment_id: str) -> list[dict]:
         return self.all("SELECT * FROM progress_history WHERE assignment_id = ? ORDER BY seq", (assignment_id,))

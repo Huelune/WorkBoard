@@ -12,7 +12,9 @@ CREATE TRIGGER {table}_no_delete BEFORE DELETE ON {table}
 BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END;
 """
 
-# One entry per schema version; append new entries, never edit old ones.
+APPEND_ONLY_TABLES = ("progress_history", "completion_review")
+
+# One entry per schema version. Once a version has shipped, append new entries and never edit it.
 MIGRATIONS = [
     """
 CREATE TABLE project (
@@ -91,12 +93,16 @@ CREATE TABLE completion_review (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     history_id TEXT NOT NULL REFERENCES progress_history(id),
+    project_id TEXT NOT NULL REFERENCES project(id),
     reviewer_id TEXT NOT NULL,
     decision TEXT NOT NULL,
     reason TEXT,
-    reviewed_at TEXT NOT NULL
+    reviewed_at TEXT NOT NULL,
+    prev_hash TEXT NOT NULL,
+    hash TEXT NOT NULL
 );
 CREATE INDEX completion_review_history ON completion_review(history_id);
+CREATE INDEX completion_review_chain ON completion_review(project_id, reviewer_id);
 CREATE TABLE sync_outbox (
     kind TEXT NOT NULL,
     project_id TEXT NOT NULL REFERENCES project(id),
@@ -105,8 +111,7 @@ CREATE TABLE sync_outbox (
     PRIMARY KEY (kind, project_id, author_id)
 );
 """
-    + _APPEND_ONLY.format(table="progress_history")
-    + _APPEND_ONLY.format(table="completion_review"),
+    + "".join(_APPEND_ONLY.format(table=table) for table in APPEND_ONLY_TABLES),
 ]
 
 

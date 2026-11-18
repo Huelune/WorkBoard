@@ -20,13 +20,13 @@
 
 ## 실행한 검증
 
-- `PYTHONPATH=src python -m unittest discover -s tests`: 50개 통과(Python 3.14)
+- `PYTHONPATH=src python -m unittest discover -s tests`: 58개 통과(Python 3.14)
 - `PYTHONPATH=src python -m workboard --version`: WorkBoard 0.1.0 출력
 - 조회 테스트는 구현 전 실패를 따로 실행해 보지 못했다(메서드가 없던 상태에서 구현과 함께 처음 실행).
 
 ## Git 및 외부 반영
 
-- 커밋: 설계 2건, 기능 4건, 문서 1건, 검토 지적 수정 2건. 모두 로컬 브랜치에만 있다.
+- 커밋: 설계 2건, 기능 4건, 문서 1건, 검토 지적 수정 2건, 무결성 검사 1건. 모두 로컬 브랜치에만 있다.
 - push, PR 없음. Notion 기록은 갱신하지 않았다.
 - .agents/STATUS.md는 main 기준 문서라 고치지 않았다.
 

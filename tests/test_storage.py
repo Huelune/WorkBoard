@@ -49,9 +49,12 @@ class StorageTests(unittest.TestCase):
                 "completion_review",
                 id="r1",
                 history_id="h1",
+                project_id="p1",
                 reviewer_id="u2",
                 decision="confirmed",
                 reviewed_at="t",
+                prev_hash="",
+                hash="x",
             )
 
     def test_schema_is_created_and_versioned(self) -> None:
