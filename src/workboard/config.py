@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,16 @@ class Settings:
 def default_config_path() -> Path:
     override = os.environ.get("WORKBOARD_CONFIG")
     return Path(override) if override else Path.home() / ".workboard" / "config.toml"
+
+
+def demo_settings() -> Settings:
+    """A throwaway database in the temp folder and a made-up login name.
+
+    For trying the app by hand (`workboard --demo`): nothing real is read or written, and a
+    screenshot of it shows no real account. It needs no environment variable or config file,
+    so the command is the same in any shell.
+    """
+    return Settings(db_path=Path(tempfile.gettempdir()) / "workboard-demo" / "demo.db", user_id="tester")
 
 
 def load_settings(path: Path | None = None, *, home: Path | None = None) -> Settings:

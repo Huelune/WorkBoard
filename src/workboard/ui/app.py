@@ -4,7 +4,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from workboard.config import load_settings
+from workboard.config import demo_settings, load_settings
 from workboard.services import WorkBoardService
 from workboard.storage import open_database
 from workboard.ui.login import LoginDialog
@@ -55,8 +55,8 @@ def check_excel() -> int:
         app.shutdown()
 
 
-def run() -> int:
-    settings = load_settings()
+def run(demo: bool = False) -> int:
+    settings = demo_settings() if demo else load_settings()
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
     app = QApplication(sys.argv[:1])
     conn = open_database(settings.db_path)

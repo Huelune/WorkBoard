@@ -13,6 +13,11 @@ def main() -> int:
         action="store_true",
         help="pick a workbook and report only whether this PC's Excel could read it (counts, no content)",
     )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="open with a throwaway database in the temp folder and the login name 'tester'",
+    )
     options = parser.parse_args()
     try:
         from workboard.ui.app import check_excel, run
@@ -21,7 +26,7 @@ def main() -> int:
             raise
         print("PySide6 is not installed. Install it with: python -m pip install PySide6")
         return 1
-    return check_excel() if options.check_excel else run()
+    return check_excel() if options.check_excel else run(demo=options.demo)
 
 
 if __name__ == "__main__":
