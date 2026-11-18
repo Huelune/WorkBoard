@@ -20,7 +20,7 @@ from workboard.ui.text import spark
 if TYPE_CHECKING:
     from workboard.ui.main_window import MainWindow
 
-ASSIGNEE_COLUMNS = ["담당자", "배정", "완료 신고", "확인된 완료", "반려", "주별 확인된 완료", "주당 평균"]
+ASSIGNEE_COLUMNS = ["담당자", "배정", "본인 등록", "완료 신고", "확인된 완료", "반려", "주별 확인된 완료", "주당 평균"]
 PROJECT_COLUMNS = ["프로젝트", "전체", "확인된 완료", "남음", "주별 확인된 완료", "주당 평균", "남은 주(추정)"]
 
 
@@ -99,7 +99,7 @@ class PacePage(QWidget):
         _fill(
             self.assignees,
             [
-                [p["assignee_id"], p["assigned"], p["reported"], p["confirmed"], p["rejected"], spark(p["weekly"]), p["per_week"]]
+                [window.person(p["assignee_id"]), p["assigned"], p["self_added"], p["reported"], p["confirmed"], p["rejected"], spark(p["weekly"]), p["per_week"]]
                 for p in pace
             ],
         )

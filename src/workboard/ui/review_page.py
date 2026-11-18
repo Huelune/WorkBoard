@@ -73,7 +73,7 @@ class ReviewPage(QWidget):
             item = QTreeWidgetItem(
                 [
                     row["title"],
-                    row["assignee_id"],
+                    window.person(row["assignee_id"]),
                     local_time(row["reported_at"]),
                     row["evidence_ref"] or "",
                     row["evidence_note"] or "",

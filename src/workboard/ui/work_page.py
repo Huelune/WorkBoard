@@ -146,7 +146,7 @@ class WorkPage(QWidget):
         if self.hide_confirmed.isChecked() and row["review_state"] == "confirmed":
             return False
         needle = self.search.text().strip().casefold()
-        return not needle or needle in f"{row['title']} {row['assignee_id']}".casefold()
+        return not needle or needle in f"{row['title']} {row['assignee_id']} {self.win.person(row['assignee_id'])}".casefold()
 
     def reload(self) -> None:
         window = self.win
@@ -157,7 +157,8 @@ class WorkPage(QWidget):
         today, project = window.today(), window.project_id
         red, amber, green = (tone(name, self.palette()) for name in ("red", "amber", "green"))
         editor = bool(project) and window.service.is_editor(window.actor, project)
-        for button in (self.add_button, self.due_button, self.cancel_button):
+        self.add_button.setEnabled(bool(project) and window.service.is_member(window.actor, project))
+        for button in (self.due_button, self.cancel_button):
             button.setEnabled(editor)
         if self.mine:
             rows = window.service.my_assignments(window.actor)
@@ -178,7 +179,7 @@ class WorkPage(QWidget):
             )
             for summary in summaries:
                 key = summary["key"]
-                name = key if by == "assignee" else window.names.get(key, "분류 없음")
+                name = window.person(key) if by == "assignee" else window.names.get(key, "분류 없음")
                 parent = QTreeWidgetItem([f"{name} · {summary['count']}건", "", "", group_notes(summary)])
                 parent.setData(1, ROLE, key)
                 parent.setData(PROGRESS_COLUMN, ROLE, round(summary["average_progress"]))
@@ -199,7 +200,7 @@ class WorkPage(QWidget):
             item = QTreeWidgetItem(
                 [
                     row["title"],
-                    row["assignee_id"],
+                    window.person(row["assignee_id"]),
                     "",
                     note,
                     row["due_date"] or "",
@@ -224,4 +225,4 @@ class WorkPage(QWidget):
         if not row:
             self.detail.clear()
             return
-        self.detail.setHtml(detail_html(self.win.service.assignment_detail(row["assignment_id"]), self.win.names))
+        self.detail.setHtml(detail_html(self.win.service.assignment_detail(row["assignment_id"]), self.win.names, self.win.person))

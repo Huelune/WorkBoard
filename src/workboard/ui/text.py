@@ -65,15 +65,16 @@ def _link(reference: str | None) -> str:
     return f'<a href="{safe}">{safe}</a>' if reference.startswith(("http://", "https://")) else safe
 
 
-def detail_html(detail: dict, names: dict[str | None, str]) -> str:
+def detail_html(detail: dict, names: dict[str | None, str], person=lambda user_id: user_id) -> str:  # noqa: ANN001
     """Detail panel body. Everything typed by a person is escaped before it becomes HTML."""
     row = detail["row"]
     text = lambda value: escape(str(value)) if value not in (None, "") else "-"  # noqa: E731
+    own = "<br><b>등록</b> 담당자 본인" if row.get("created_by") == row["assignee_id"] else ""
     lines = [
         f"<h3>{text(row['title'])}</h3>",
-        f"<p><b>담당자</b> {text(row['assignee_id'])} · <b>기한</b> {text(row['due_date'])}<br>"
+        f"<p><b>담당자</b> {text(person(row['assignee_id']))} · <b>기한</b> {text(row['due_date'])}<br>"
         f"<b>범위</b> {text(names.get(row['scope_id']))} · <b>분류</b> {text(names.get(row['category_id']))}<br>"
-        f"<b>외부 참조</b> {_link(row['external_url'] or row['external_ref'])}</p>",
+        f"<b>외부 참조</b> {_link(row['external_url'] or row['external_ref'])}{own}</p>",
         f"<p><b>상태</b> {state_label(row)} · {row['progress']}%"
         + (f" · {RESULT[row['result']]}" if row["result"] else "")
         + (f"<br><b>보류 사유</b> {text(row['hold_reason'])}" if row["hold_reason"] else "")
@@ -87,7 +88,7 @@ def detail_html(detail: dict, names: dict[str | None, str]) -> str:
             reason = f" — {text(review['reason'])}" if review["reason"] else ""
             lines.append(
                 f"<li>{local_time(review['reviewed_at'])} {DECISION[review['decision']]} "
-                f"({text(review['reviewer_id'])}){reason}</li>"
+                f"({text(person(review['reviewer_id']))}){reason}</li>"
             )
         lines.append("</ul>")
     lines.append("<p><b>이력</b></p><ul>")

@@ -112,6 +112,20 @@ CREATE TABLE sync_outbox (
 );
 """
     + "".join(_APPEND_ONLY.format(table=table) for table in APPEND_ONLY_TABLES),
+    # 2: project members (who can be picked as an assignee, with a display name) and who added a work item.
+    """
+CREATE TABLE project_member (
+    project_id TEXT NOT NULL REFERENCES project(id),
+    user_id TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (project_id, user_id)
+);
+INSERT OR IGNORE INTO project_member (project_id, user_id)
+    SELECT project_id, user_id FROM project_editor;
+INSERT OR IGNORE INTO project_member (project_id, user_id)
+    SELECT w.project_id, a.assignee_id FROM assignment a JOIN work_item w ON w.id = a.work_item_id;
+ALTER TABLE work_item ADD COLUMN created_by TEXT;
+""",
 ]
 
 

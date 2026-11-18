@@ -5,7 +5,9 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QSpinBox,
     QWidget,
 )
@@ -86,39 +88,82 @@ class ProgressDialog(_FormDialog):
         }
 
 
-class WorkItemDialog(_FormDialog):
-    """A work item together with its first assignment; unassigned items are not listed anywhere."""
+def parse_work_lines(text: str) -> list[dict]:
+    """One work item per line. Tab-separated extras (pasted from a spreadsheet): reference ID, link."""
+    items = []
+    for line in text.splitlines():
+        if line.strip():
+            parts = [part.strip() for part in line.split("\t")] + ["", ""]
+            items.append({"title": parts[0], "external_ref": parts[1], "external_url": parts[2]})
+    return items
 
-    def __init__(self, scopes: list[dict], categories: list[dict], parent: QWidget | None = None) -> None:
+
+class WorkItemDialog(_FormDialog):
+    """Adds one or many work items, each with its first assignment.
+
+    An editor picks any member (or types a new ID); a member who is not an editor
+    can only add work for themselves, so the assignee is fixed.
+    """
+
+    def __init__(
+        self,
+        scopes: list[dict],
+        categories: list[dict],
+        members: list[dict],
+        actor: str,
+        editor: bool,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__("업무 추가", parent)
-        self.title = QLineEdit()
+        self.titles = QPlainTextEdit()
+        self.titles.setPlaceholderText(
+            "한 줄에 업무 하나. 여러 줄을 붙여 넣으면 한꺼번에 등록됩니다.\n"
+            "엑셀에서 두세 칸을 복사해 붙이면 둘째 칸은 외부 참조 ID, 셋째 칸은 링크로 들어갑니다."
+        )
+        self.titles.setMinimumHeight(140)
+        self.counter = QLabel()
         self.scope = QComboBox()
         self.category = QComboBox()
         for combo, records in ((self.scope, scopes), (self.category, categories)):
             combo.addItem("없음", None)
             for record in records:
                 combo.addItem(record["name"], record["id"])
-        self.external_ref = QLineEdit()
-        self.external_url = QLineEdit()
-        self.assignee = QLineEdit()
+        self.assignee = QComboBox()
+        for member in members:
+            if editor or member["user_id"] == actor:
+                name = member["display_name"]
+                label = f"{name} ({member['user_id']})" if name else member["user_id"]
+                self.assignee.addItem(label, member["user_id"])
+        self.assignee.setCurrentIndex(max(0, self.assignee.findData(actor)))
+        self.assignee.setEditable(editor)
+        self.assignee.setEnabled(editor)
         self.due_date = QLineEdit()
         self.due_date.setPlaceholderText("YYYY-MM-DD (비워 두면 기한 없음)")
-        self.form.addRow("제목 (필수)", self.title)
+        self.form.addRow("업무 (필수)", self.titles)
+        self.form.addRow("", self.counter)
         self.form.addRow("범위", self.scope)
         self.form.addRow("분류", self.category)
-        self.form.addRow("외부 참조 ID", self.external_ref)
-        self.form.addRow("외부 링크", self.external_url)
-        self.form.addRow("담당자 ID (필수)", self.assignee)
+        self.form.addRow("담당자" if editor else "담당자 (본인)", self.assignee)
         self.form.addRow("기한", self.due_date)
         self.add_buttons("추가")
+        self.titles.textChanged.connect(self._count)
+        self._count()
+
+    def _count(self) -> None:
+        self.counter.setText(f"{len(parse_work_lines(self.titles.toPlainText()))}건 등록")
+
+    def assignee_id(self) -> str:
+        """The picked member, or the text an editor typed for someone not in the list yet."""
+        combo = self.assignee
+        if combo.currentIndex() >= 0 and combo.currentText() == combo.itemText(combo.currentIndex()):
+            return combo.currentData()
+        return combo.currentText()
 
     def values(self) -> dict:
         return {
-            "title": self.title.text(),
+            "items": parse_work_lines(self.titles.toPlainText()),
             "scope_id": self.scope.currentData(),
             "category_id": self.category.currentData(),
-            "external_ref": self.external_ref.text(),
-            "external_url": self.external_url.text(),
-            "assignee_id": self.assignee.text(),
+            "assignee_id": self.assignee_id(),
             "due_date": self.due_date.text().strip() or None,
         }

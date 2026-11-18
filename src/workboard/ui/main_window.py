@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from workboard.domain import WorkBoardError, clean_text, validate_due_date
+from workboard.domain import WorkBoardError
 from workboard.services import WorkBoardService
 from workboard.ui.dialogs import ProgressDialog, WorkItemDialog
 from workboard.ui.pace_page import PacePage
@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.service, self.actor = service, actor
         self.names: dict[str | None, str] = {}
+        self.people: dict[str, str] = {}
         self.setWindowTitle(f"WorkBoard — {actor}")
         self.resize(1180, 720)
 
@@ -51,6 +52,7 @@ class MainWindow(QMainWindow):
         new_project = QPushButton("새 프로젝트")
         self.manage = QPushButton("관리")
         menu = QMenu(self.manage)
+        menu.addAction("구성원 추가", self.ask_member)
         menu.addAction("편집자 추가", lambda: self._ask("편집자 추가", "사용자 ID", self.add_editor))
         menu.addAction("범위 추가", lambda: self._ask("범위 추가", "범위 이름 (예: 코드 버전)", self.add_scope))
         menu.addAction("분류 추가", lambda: self._ask("분류 추가", "분류 이름", self.add_category))
@@ -112,6 +114,10 @@ class MainWindow(QMainWindow):
     def category_id(self) -> str | None:
         return self.category.currentData()
 
+    def person(self, user_id: str) -> str:
+        """Display name in the current project, falling back to the ID."""
+        return self.people.get(user_id, user_id)
+
     def today(self) -> str:
         return date.today().isoformat()
 
@@ -141,6 +147,8 @@ class MainWindow(QMainWindow):
         scopes = self.service.list_scopes(project) if project else []
         categories = self.service.list_categories(project) if project else []
         self.names = {record["id"]: record["name"] for record in scopes + categories}
+        members = self.service.list_members(project) if project else []
+        self.people = {m["user_id"]: m["display_name"] or m["user_id"] for m in members}
         self._fill(self.scope, scopes, "전체")
         self._fill(self.category, categories, "전체")
         self.manage.setEnabled(bool(project) and self.service.is_editor(self.actor, project))
@@ -188,23 +196,21 @@ class MainWindow(QMainWindow):
         position = self.category.count()
         return self.act(lambda: self.service.create_category(self.actor, self.project_id, name, position))
 
-    def add_work_item(self, values: dict) -> bool:
-        def call() -> None:
-            # Check the assignment half first: a work item saved without it would be invisible.
-            assignee = clean_text(values["assignee_id"], "assignee", required=True)
-            due_date = validate_due_date(values["due_date"])
-            item = self.service.create_work_item(
+    def add_member(self, user_id: str, display_name: str = "") -> bool:
+        return self.act(lambda: self.service.add_member(self.actor, self.project_id, user_id, display_name))
+
+    def add_work_items(self, values: dict) -> bool:
+        return self.act(
+            lambda: self.service.add_work_items(
                 self.actor,
                 self.project_id,
-                values["title"],
+                values["items"],
+                values["assignee_id"],
+                due_date=values["due_date"],
                 scope_id=values["scope_id"],
                 category_id=values["category_id"],
-                external_ref=values["external_ref"],
-                external_url=values["external_url"],
             )
-            self.service.assign(self.actor, item, assignee, due_date)
-
-        return self.act(call)
+        )
 
     def save_progress(self, assignment_id: str, values: dict) -> bool:
         return self.act(lambda: self.service.update_progress(self.actor, assignment_id, **values))
@@ -228,11 +234,25 @@ class MainWindow(QMainWindow):
     def ask_work_item(self) -> None:
         if not self.project_id:
             return
+        project = self.project_id
         dialog = WorkItemDialog(
-            self.service.list_scopes(self.project_id), self.service.list_categories(self.project_id), self
+            self.service.list_scopes(project),
+            self.service.list_categories(project),
+            self.service.list_members(project),
+            self.actor,
+            self.service.is_editor(self.actor, project),
+            self,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.add_work_item(dialog.values())
+            self.add_work_items(dialog.values())
+
+    def ask_member(self) -> None:
+        user_id, accepted = QInputDialog.getText(self, "구성원 추가", "사용자 ID")
+        if not accepted:
+            return
+        name, accepted = QInputDialog.getText(self, "구성원 추가", "표시 이름 (비워도 됩니다)")
+        if accepted:
+            self.add_member(user_id, name)
 
     def edit_progress(self, row: dict | None) -> None:
         if not row or row["assignee_id"] != self.actor:

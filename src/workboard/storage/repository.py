@@ -6,7 +6,7 @@ import sqlite3
 
 _ASSIGNMENT_ROWS = """
 SELECT a.id AS assignment_id, w.project_id, w.id AS work_item_id, w.title,
-       w.scope_id, w.category_id, w.external_ref, w.external_url,
+       w.scope_id, w.category_id, w.external_ref, w.external_url, w.created_by,
        a.assignee_id, a.due_date,
        COALESCE(p.status, 'not_started') AS status, COALESCE(p.progress, 0) AS progress,
        p.result, p.hold_reason, p.evidence_ref, p.evidence_note,
@@ -73,6 +73,34 @@ class Repository:
     def add_editor(self, project_id: str, user_id: str) -> None:
         self._conn.execute(
             "INSERT OR IGNORE INTO project_editor (project_id, user_id) VALUES (?, ?)", (project_id, user_id)
+        )
+
+    def add_member(self, project_id: str, user_id: str, display_name: str | None = None) -> None:
+        """Add a member, or update the display name of an existing one when a name is given."""
+        self._conn.execute(
+            "INSERT OR IGNORE INTO project_member (project_id, user_id) VALUES (?, ?)", (project_id, user_id)
+        )
+        if display_name:
+            self._conn.execute(
+                "UPDATE project_member SET display_name = ? WHERE project_id = ? AND user_id = ?",
+                (display_name, project_id, user_id),
+            )
+
+    def is_member(self, project_id: str, user_id: str) -> bool:
+        return (
+            self.one(
+                "SELECT 1 FROM project_member WHERE project_id = ? AND user_id = ?", (project_id, user_id)
+            )
+            is not None
+        )
+
+    def members(self, project_id: str) -> list[dict]:
+        return self.all(
+            "SELECT m.user_id, m.display_name, e.user_id IS NOT NULL AS is_editor"
+            " FROM project_member m LEFT JOIN project_editor e"
+            " ON e.project_id = m.project_id AND e.user_id = m.user_id"
+            " WHERE m.project_id = ? ORDER BY m.rowid",
+            (project_id,),
         )
 
     def get_assignment(self, assignment_id: str) -> dict | None:

@@ -193,6 +193,7 @@ class WorkBoardService:
                 "project", id=project_id, name=name, description=description or "", created_at=now
             )
             self._repo.add_editor(project_id, actor)
+            self._repo.add_member(project_id, actor)
             self._repo.mark_dirty("definition", project_id, "", now)
         return project_id
 
@@ -201,7 +202,81 @@ class WorkBoardService:
         with self._write():
             self._require_editor(actor, project_id)
             self._repo.add_editor(project_id, user_id)
+            self._repo.add_member(project_id, user_id)
             self._repo.mark_dirty("definition", project_id, "", self._now())
+
+    def add_member(self, actor: str, project_id: str, user_id: str, display_name: str | None = None) -> None:
+        """Members can be picked as assignees and may add work for themselves."""
+        user_id = clean_text(user_id, "user", required=True)
+        display_name = clean_text(display_name, "display name")
+        with self._write():
+            self._require_editor(actor, project_id)
+            self._repo.add_member(project_id, user_id, display_name)
+            self._repo.mark_dirty("definition", project_id, "", self._now())
+
+    def add_work_items(
+        self,
+        actor: str,
+        project_id: str,
+        items: list[dict],
+        assignee_id: str,
+        due_date: str | None = None,
+        scope_id: str | None = None,
+        category_id: str | None = None,
+    ) -> list[str]:
+        """Add several work items, each with one assignment, in one transaction.
+
+        An editor may assign them to anyone. A member who is not an editor may add work
+        only for themselves; `created_by` keeps that visible. Returns the assignment IDs.
+        """
+        assignee_id = clean_text(assignee_id, "assignee", required=True)
+        due_date = validate_due_date(due_date)
+        if not isinstance(items, list) or not items or not all(isinstance(item, dict) for item in items):
+            raise ValidationError("at least one work item is required")
+        cleaned = [
+            (
+                clean_text(item.get("title"), "title", required=True),
+                clean_text(item.get("external_ref"), "external reference"),
+                clean_text(item.get("external_url"), "external link"),
+            )
+            for item in items
+        ]
+        with self._write():
+            self._get("project", project_id)
+            if not self._is_editor(project_id, actor):
+                if not (isinstance(actor, str) and self._repo.is_member(project_id, actor)):
+                    raise PermissionDenied("only project members may add work")
+                if assignee_id != actor:
+                    raise PermissionDenied("members may add work only for themselves")
+            self._in_project("scope", scope_id, project_id)
+            self._in_project("category", category_id, project_id)
+            now = self._now()
+            assignment_ids = []
+            for title, external_ref, external_url in cleaned:
+                work_item_id = WorkItemId.new().value
+                self._repo.insert(
+                    "work_item",
+                    id=work_item_id,
+                    project_id=project_id,
+                    title=title,
+                    scope_id=scope_id,
+                    category_id=category_id,
+                    external_ref=external_ref,
+                    external_url=external_url,
+                    created_by=actor,
+                )
+                assignment_ids.append(str(uuid4()))
+                self._repo.insert(
+                    "assignment",
+                    id=assignment_ids[-1],
+                    work_item_id=work_item_id,
+                    assignee_id=assignee_id,
+                    due_date=due_date,
+                    created_at=now,
+                )
+            self._repo.add_member(project_id, assignee_id)
+            self._repo.mark_dirty("definition", project_id, "", now)
+            return assignment_ids
 
     def create_scope(
         self, actor: str, project_id: str, name: str, kind: str = "", parent_id: str | None = None
@@ -245,6 +320,7 @@ class WorkBoardService:
                 category_id=category_id,
                 external_ref=clean_text(external_ref, "external reference"),
                 external_url=clean_text(external_url, "external link"),
+                created_by=actor,
             )
 
     def delete_work_item(self, actor: str, work_item_id: str) -> None:
@@ -272,6 +348,7 @@ class WorkBoardService:
                 due_date=due_date,
                 created_at=now,
             )
+            self._repo.add_member(item["project_id"], assignee_id)
             self._repo.mark_dirty("definition", item["project_id"], "", now)
         return assignment_id
 
@@ -435,6 +512,13 @@ class WorkBoardService:
         """For the UI to enable editor controls; the write methods still check for themselves."""
         return isinstance(project_id, str) and self._is_editor(project_id, actor)
 
+    def is_member(self, actor: str, project_id: str) -> bool:
+        return isinstance(project_id, str) and isinstance(actor, str) and self._repo.is_member(project_id, actor)
+
+    def list_members(self, project_id: str) -> list[dict]:
+        self._get("project", project_id)
+        return [{**member, "is_editor": bool(member["is_editor"])} for member in self._repo.members(project_id)]
+
     # ----- reads (anyone)
     # shortcut: aggregates count rows in Python per call, move to SQL if a project passes ~10k assignments.
 
@@ -550,6 +634,7 @@ class WorkBoardService:
                     "reported": pace["reported"],
                     "confirmed": pace["confirmed"],
                     "rejected": rejected.get(assignee_id, 0),
+                    "self_added": sum(r["created_by"] == assignee_id for r in rows),
                     "per_week": pace["per_week"],
                     "weekly": pace["weekly"],
                 }

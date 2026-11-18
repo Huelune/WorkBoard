@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     from PySide6.QtWidgets import QApplication
 
-    from workboard.ui.dialogs import ProgressDialog, WorkItemDialog
+    from workboard.ui.dialogs import ProgressDialog, WorkItemDialog, parse_work_lines
     from workboard.ui.main_window import MainWindow
     from workboard.ui.work_page import NOTE_COLUMN, PROGRESS_COLUMN, ROLE
 except ImportError:  # the UI is optional for the stdlib-only test run
@@ -149,29 +149,63 @@ class WorkListTests(UiCase):
         self.assertNotIn("href", self.page.detail.toHtml())
         self.assertFalse(self.page.progress_button.isEnabled())
 
-    def test_editor_adds_work_and_bad_input_saves_nothing(self) -> None:
+    def test_editor_adds_many_and_bad_input_saves_nothing(self) -> None:
         values = {
-            "title": "새 업무",
+            "items": parse_work_lines("새 업무 1\n\n새 업무 2\tREF-9\thttps://example.test/9\n"),
             "scope_id": None,
             "category_id": self.unit,
-            "external_ref": "",
-            "external_url": "",
             "assignee_id": "u2",
             "due_date": "2026-13-01",
         }
+        self.assertEqual(values["items"][1], {"title": "새 업무 2", "external_ref": "REF-9", "external_url": "https://example.test/9"})
         before = self.conn.execute("SELECT COUNT(*) FROM work_item").fetchone()[0]
-        self.assertFalse(self.win.add_work_item(values))
-        self.assertFalse(self.win.add_work_item({**values, "due_date": None, "assignee_id": " "}))
+        self.assertFalse(self.win.add_work_items(values))
+        self.assertFalse(self.win.add_work_items({**values, "due_date": None, "assignee_id": " "}))
+        self.assertFalse(self.win.add_work_items({**values, "due_date": None, "items": []}))
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM work_item").fetchone()[0], before)
-        self.assertTrue(self.win.add_work_item({**values, "due_date": "2026-02-01"}))
-        self.assertEqual(self.tops(self.page.tree)[1].text(0), "u2 · 3건")
+        self.assertTrue(self.win.add_work_items({**values, "due_date": "2026-02-01"}))
+        self.assertEqual(self.tops(self.page.tree)[1].text(0), "u2 · 4건")
         self.assertTrue(self.win.add_category("INTEG"))
         self.assertEqual(self.win.category.count(), 3)
+
+    def test_member_names_are_shown_and_members_add_their_own_work(self) -> None:
+        self.assertTrue(self.win.add_member("u1", "김 담당"))
+        self.assertEqual(self.tops(self.page.tree)[0].text(0), "김 담당 · 3건")
+        self.page.search.setText("김 담")
+        self.assertEqual(len(self.kids(self.tops(self.page.tree)[0])), 2)
+        member = self.window("u1")
+        self.assertTrue(member.work_page.add_button.isEnabled())
+        self.assertFalse(member.work_page.cancel_button.isEnabled())
+        mine = {"items": parse_work_lines("내가 만든 일"), "scope_id": None, "category_id": None, "due_date": None}
+        self.assertFalse(member.add_work_items({**mine, "assignee_id": "u2"}))
+        self.assertTrue(member.add_work_items({**mine, "assignee_id": "u1"}))
+        self.assertEqual(member.work_page.tree.topLevelItem(0).text(0), "김 담당 · 4건")
+        self.assertFalse(self.window("stranger").work_page.add_button.isEnabled())
+
+    def test_work_dialog_offers_members_to_editors_and_fixes_it_for_others(self) -> None:
+        self.svc.add_member("ed1", self.project, "u1", "김 담당")
+        members = self.svc.list_members(self.project)
+        for_editor = WorkItemDialog([], self.svc.list_categories(self.project), members, "ed2", True)
+        labels = [for_editor.assignee.itemText(i) for i in range(for_editor.assignee.count())]
+        self.assertEqual(labels, ["ed1", "ed2", "김 담당 (u1)", "u2"])
+        self.assertEqual(for_editor.assignee_id(), "ed2")
+        for_editor.assignee.setCurrentIndex(2)
+        self.assertEqual(for_editor.assignee_id(), "u1")
+        for_editor.assignee.setEditText("새사람")
+        self.assertEqual(for_editor.assignee_id(), "새사람")
+        for_editor.titles.setPlainText("가\n나\n\n다")
+        self.assertEqual(for_editor.counter.text(), "3건 등록")
+        self.assertEqual([i["title"] for i in for_editor.values()["items"]], ["가", "나", "다"])
+        for_member = WorkItemDialog([], [], members, "u1", False)
+        self.assertEqual(for_member.assignee.count(), 1)
+        self.assertEqual(for_member.assignee_id(), "u1")
+        self.assertFalse(for_member.assignee.isEnabled())
 
     def test_non_editor_cannot_manage(self) -> None:
         window = self.window("u1")
         self.assertFalse(window.manage.isEnabled())
-        self.assertFalse(window.work_page.add_button.isEnabled())
+        self.assertFalse(window.work_page.due_button.isEnabled())
+        self.assertFalse(window.add_member("u9"))
         self.assertFalse(window.cancel_assignment(self.ids["a5"]))
         self.assertIn("권한이 없습니다", self.errors[-1])
 
@@ -191,10 +225,6 @@ class WorkListTests(UiCase):
         )
         dialog.status.setCurrentIndex(dialog.status.findData("in_progress"))
         self.assertEqual(dialog.progress.value(), 99)
-        work = WorkItemDialog([], self.svc.list_categories(self.project))
-        work.title.setText("T")
-        self.assertEqual(work.values()["due_date"], None)
-        self.assertEqual(work.category.count(), 2)
 
 
 class ProgressAndReviewTests(UiCase):
@@ -253,8 +283,8 @@ class PaceAndIntegrityTests(UiCase):
         self.assertIn("전체 <b>5</b> · 확인된 완료 <b>1</b> · 확인 대기 <b>1</b> · 반려 <b>1</b>", page.status.text())
         self.assertIn("기한 초과 <b>1</b>", page.status.text())
         cells = lambda table, row: [table.item(row, c).text() for c in range(table.columnCount())]  # noqa: E731
-        self.assertEqual(cells(page.assignees, 0), ["u1", "3", "2", "1", "0", "··█·", "0.25"])
-        self.assertEqual(cells(page.assignees, 1), ["u2", "2", "1", "0", "1", "····", "0.0"])
+        self.assertEqual(cells(page.assignees, 0), ["u1", "3", "0", "2", "1", "0", "··█·", "0.25"])
+        self.assertEqual(cells(page.assignees, 1), ["u2", "2", "0", "1", "0", "1", "····", "0.0"])
         self.assertEqual(cells(page.projects, 0), ["P1", "5", "1", "4", "··█·", "0.25", "약 16주"])
         other = self.svc.create_project("ed1", "P2")
         item = self.svc.create_work_item("ed1", other, "b1")
