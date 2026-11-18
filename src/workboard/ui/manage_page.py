@@ -114,11 +114,16 @@ class ManagePage(QWidget):
         items.addWidget(self.scope_box, 1)
         items.addWidget(self.category_box, 1)
         items.addWidget(self.member_box, 2)
+        self.new_project = QPushButton("새 프로젝트")
+        heading = QHBoxLayout()
+        heading.addWidget(self.note, 1)
+        heading.addWidget(self.new_project)
         layout = QVBoxLayout(self)
-        layout.addWidget(self.note)
+        layout.addLayout(heading)
         layout.addWidget(names_box)
         layout.addLayout(items, 1)
 
+        self.new_project.clicked.connect(self.win.ask_new_project)
         self.rename_button.clicked.connect(
             lambda: self.win.set_labels(self.scope_name.text(), self.category_name.text())
         )

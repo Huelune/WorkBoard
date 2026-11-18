@@ -13,7 +13,6 @@ REVIEW = {"pending": "확인 대기", "confirmed": "확인됨", "rejected": "반
 RESULT = {"pass": "통과", "fail": "실패", "na": "해당 없음"}
 DECISION = {"confirmed": "확인", "rejected": "반려"}
 DEFAULT_LABELS = ("대상 버전", "업무 분야")
-_BLOCKS = "▁▂▃▄▅▆▇█"
 
 
 def state_label(row: dict) -> str:
@@ -36,33 +35,70 @@ def group_notes(summary: dict) -> str:
     return " · ".join(notes) or "문제 없음"
 
 
-def spark(values: list[int]) -> str:
-    """One block character per week, scaled to the busiest week."""
-    top = max(values, default=0)
-    return "".join(_BLOCKS[(value * 8 - 1) // top] if value else "·" for value in values)
-
-
 def local_time(stamp: str | None) -> str:
     return datetime.fromisoformat(stamp).astimezone().strftime("%m-%d %H:%M") if stamp else ""
 
 
+# What each refusal means for the person, keyed by the Service's own message.
+# Anything not listed falls back to a short sentence for its kind.
+_REFUSALS = {
+    "progress does not match the status": "진행도가 상태와 맞지 않습니다. 미시작은 0, 완료는 100, 그 밖은 0~99입니다.",
+    "hold reason is required": "보류 사유를 적어 주세요.",
+    "evidence reference is required": "완료 근거를 적어 주세요. 결과 문서의 링크나 항목 ID입니다.",
+    "reason is required": "반려 사유를 적어 주세요.",
+    "title is required": "제목이 빈 줄이 있습니다. 제목을 적거나 그 줄을 지워 주세요.",
+    "name is required": "이름을 적어 주세요.",
+    "assignee is required": "담당자를 골라 주세요.",
+    "user is required": "사용자 ID를 적어 주세요.",
+    "scope label is required": "첫째 칸 이름을 적어 주세요.",
+    "category label is required": "둘째 칸 이름을 적어 주세요.",
+    "due date must be YYYY-MM-DD": "기한은 YYYY-MM-DD 형식의 실제 날짜여야 합니다.",
+    "external link must start with http:// or https://": "링크는 http:// 또는 https://로 시작해야 합니다.",
+    "both grouping fields are required for new work": "위쪽 두 칸의 항목을 모두 골라 주세요.",
+    "at least one work item is required": "등록할 업무를 한 줄 이상 적어 주세요.",
+    "no account with that ID": "그 ID로 만든 계정이 없습니다. 먼저 본인이 로그인 창에서 계정을 만든 뒤에 추가하세요.",
+    "a project needs at least one editor": "편집자는 한 명 이상 남아야 합니다.",
+    "remove the editor role first": "편집자는 역할을 먼저 해제해야 뺄 수 있습니다.",
+    "that member is not an editor": "그 구성원은 편집자가 아닙니다.",
+    "only a completed assignment can be reviewed": "완료로 신고된 업무만 확인할 수 있습니다. 새로 고친 뒤 다시 보세요.",
+    "assignment is cancelled or its work item is deleted": "취소되었거나 삭제된 업무입니다. 새로 고친 뒤 다시 보세요.",
+    "work item is deleted": "삭제된 업무입니다. 새로 고친 뒤 다시 보세요.",
+    "only the assignee may change progress": "권한이 없습니다. 진행은 담당자 본인만 바꿀 수 있습니다.",
+    "you may not review your own work": "권한이 없습니다. 자기가 담당한 업무는 확인할 수 없습니다.",
+    "only a project editor may change definitions": "권한이 없습니다. 프로젝트 편집자만 바꿀 수 있습니다.",
+    "only a project editor may review a completion": "권한이 없습니다. 완료 확인은 프로젝트 편집자만 할 수 있습니다.",
+    "members may add work only for themselves": "권한이 없습니다. 구성원은 자기 자신의 업무만 등록할 수 있습니다.",
+    "only project members may add work": "권한이 없습니다. 이 프로젝트의 구성원만 업무를 등록할 수 있습니다.",
+}
+# Which input a refusal is about, so the form can put the cursor there.
+_FIELDS = {
+    "progress does not match the status": "progress",
+    "hold reason is required": "hold_reason",
+    "evidence reference is required": "evidence_ref",
+}
+
+
 def error_text(error: Exception) -> str:
-    """Kind and next step only; raw messages may carry paths or values."""
+    """What went wrong and what to do, in the person's words. Never the raw message:
+    it is written for developers and an unexpected one may carry paths or values."""
+    known = _REFUSALS.get(str(error))
+    if known:
+        return known
     if isinstance(error, PermissionDenied):
         return "권한이 없습니다. 정의는 프로젝트 편집자가, 진행은 담당자 본인이 바꿉니다."
-    if isinstance(error, ValidationError) and str(error) == "no account with that ID":
-        return "그 ID로 만든 계정이 없습니다. 먼저 본인이 로그인 창에서 계정을 만든 뒤에 추가하세요."
     if isinstance(error, ValidationError):
-        return (
-            "입력을 확인하세요. 업무에는 위쪽 두 칸의 항목이 모두 필요하고, 완료에는 근거가, 보류와 반려에는 "
-            "사유가 필요합니다. 기한은 YYYY-MM-DD, 링크는 http:// 또는 https:// 주소입니다. "
-            "편집자는 한 명 이상 남아야 하고, 편집자는 역할을 먼저 해제해야 뺄 수 있습니다."
-        )
+        if "was deleted" in str(error):
+            return "삭제된 항목은 새 업무에 쓸 수 없습니다. 다른 항목을 골라 주세요."
+        return "입력을 확인하세요. 빠졌거나 형식이 맞지 않는 칸이 있습니다."
     if isinstance(error, NotFound):
         return "대상을 찾을 수 없습니다. 새로 고친 뒤 다시 시도하세요."
     if isinstance(error, sqlite3.Error):
         return "저장하지 못했습니다. 다른 창이 쓰는 중이면 잠시 뒤 다시 시도하세요."
     return "처리하지 못했습니다."
+
+
+def error_field(error: Exception) -> str | None:
+    return _FIELDS.get(str(error))
 
 
 def _link(reference: str | None) -> str:

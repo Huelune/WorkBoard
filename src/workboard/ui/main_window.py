@@ -10,32 +10,32 @@ from PySide6.QtCore import QSignalBlocker, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
-    QDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QListWidget,
     QMainWindow,
+    QMenu,
     QMessageBox,
-    QPushButton,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from workboard.domain import WorkBoardError, is_web_link
 from workboard.services import WorkBoardService
-from workboard.ui.dialogs import ProgressDialog, WorkItemDialog
+from workboard.ui.dialogs import DueDateDialog, WorkItemDialog
 from workboard.ui.login import ChangePasswordDialog
 from workboard.ui.manage_page import ManagePage
 from workboard.ui.pace_page import PacePage
 from workboard.ui.review_page import ReviewPage
-from workboard.ui.text import DEFAULT_LABELS, error_text
+from workboard.ui.text import DEFAULT_LABELS, error_field, error_text
 from workboard.ui.work_page import WorkPage
 
 PAGES = ["업무 목록", "내 업무", "확인 대기", "현황·속도", "관리"]
-REVIEW_INDEX = 2
-MANAGE_INDEX = 4
+WORK_INDEX, MINE_INDEX, REVIEW_INDEX, MANAGE_INDEX = 0, 1, 2, 4
+SAVED = "저장됨"
 
 
 class MainWindow(QMainWindow):
@@ -56,21 +56,33 @@ class MainWindow(QMainWindow):
         self.project.setMinimumWidth(180)
         self.scope = QComboBox()
         self.category = QComboBox()
-        new_project = QPushButton("새 프로젝트")
+        # The two filters only narrow the shared list, so they are only shown there.
+        self.filters = QWidget()
+        filters = QHBoxLayout(self.filters)
+        filters.setContentsMargins(0, 0, 0, 0)
+        for widget in (self.scope_caption, self.scope, self.category_caption, self.category):
+            filters.addWidget(widget)
         self.warning = QLabel("기록이 변경됨: 앱 밖에서 고친 흔적이 있습니다")
         self.warning.setStyleSheet("color: #e5534b; font-weight: bold;")
-        self.sync = QLabel()
+        self.account = QToolButton()
+        self.account.setText(actor)
+        self.account.setToolTip("로그인한 사용자")
+        self.account.setStyleSheet(  # room for the menu arrow, and the arrow level with the name
+            "QToolButton { padding: 3px 22px 3px 10px; }"
+            "QToolButton::menu-indicator { subcontrol-origin: padding; subcontrol-position: right center; right: 6px; }"
+        )
+        self.account.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        account_menu = QMenu(self.account)
+        account_menu.addAction("비밀번호 변경", lambda: ChangePasswordDialog(self.service, self.actor, self).exec())
+        self.account.setMenu(account_menu)
 
         top = QHBoxLayout()
-        for widget in (QLabel("프로젝트"), self.project, self.scope_caption, self.scope, self.category_caption, self.category):
-            top.addWidget(widget)
-        top.addWidget(new_project)
+        top.addWidget(QLabel("프로젝트"))
+        top.addWidget(self.project)
+        top.addWidget(self.filters)
         top.addStretch(1)
         top.addWidget(self.warning)
-        top.addWidget(self.sync)
-        change_password = QPushButton("비밀번호 변경")
-        top.addWidget(change_password)
-        change_password.clicked.connect(lambda: ChangePasswordDialog(self.service, self.actor, parent=self).exec())
+        top.addWidget(self.account)
 
         self.nav = QListWidget()
         self.nav.addItems(PAGES)
@@ -93,17 +105,17 @@ class MainWindow(QMainWindow):
         layout.addLayout(top)
         layout.addLayout(body, 1)
         self.setCentralWidget(central)
+        self.statusBar()  # where "저장됨" appears for a moment after each change
 
-        self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.nav.currentRowChanged.connect(self._page_changed)
         self.project.currentIndexChanged.connect(self._project_changed)
         self.scope.currentIndexChanged.connect(self._reload_pages)
         self.category.currentIndexChanged.connect(self._reload_pages)
-        new_project.clicked.connect(lambda: self._ask("새 프로젝트", "프로젝트 이름", self.create_project))
         QShortcut(QKeySequence.StandardKey.Refresh, self, self.refresh)
 
         self.refresh()
         # Most visits are an assignee updating their own work, so start there when there is any.
-        self.nav.setCurrentRow(1 if self.mine_page.rows else 0)
+        self.nav.setCurrentRow(MINE_INDEX if self.mine_page.rows else WORK_INDEX)
 
     # ----- state the pages read
 
@@ -128,6 +140,22 @@ class MainWindow(QMainWindow):
 
     def now(self) -> datetime:
         return datetime.now(timezone.utc)
+
+    # ----- navigation
+
+    def _page_changed(self, index: int) -> None:
+        self.stack.setCurrentIndex(index)
+        self._show_filters()
+
+    def _show_filters(self) -> None:
+        self.filters.setVisible(self.nav.currentRow() == WORK_INDEX and bool(self.project_id))
+
+    def show_manage(self) -> None:
+        self.nav.setCurrentRow(MANAGE_INDEX)
+
+    def clear_filters(self) -> None:
+        self.scope.setCurrentIndex(0)
+        self.category.setCurrentIndex(0)
 
     # ----- refresh
 
@@ -169,6 +197,7 @@ class MainWindow(QMainWindow):
         self.people = {m["user_id"]: m["display_name"] or m["user_id"] for m in members}
         self._fill(self.scope, scopes, "전체")
         self._fill(self.category, categories, "전체")
+        self._show_filters()
         self._reload_pages()
 
     def _reload_pages(self) -> None:
@@ -176,25 +205,42 @@ class MainWindow(QMainWindow):
             page.reload()
         waiting = self.review_page.count()
         self.nav.item(REVIEW_INDEX).setText(f"확인 대기 ({waiting})" if waiting else "확인 대기")
-        pending = self.service.pending_sync_count()
-        self.sync.setText(f"공유 대기 {pending}" if pending else "")
         self.warning.setVisible(not self.service.check_integrity()["ok"])
 
-    # ----- actions (each takes plain values so tests can call them without a dialog)
+    # ----- running a change
 
     def show_error(self, message: str) -> None:
         QMessageBox.warning(self, "WorkBoard", message)
 
-    def act(self, call: Callable[[], object]) -> bool:
-        """Run one Service change, show a refusal as kind plus next step, then redraw."""
+    def _run(self, call: Callable[[], object]) -> Exception | None:
+        """Run one Service change. A refusal changes nothing, so the screen is left exactly
+        as it was (whatever the person typed stays); a success redraws and says so."""
         try:
             call()
         except (WorkBoardError, sqlite3.Error) as error:
-            self.show_error(error_text(error))
-            return False
-        finally:
-            self.refresh()
-        return True
+            return error
+        self.refresh()
+        self.statusBar().showMessage(SAVED, 3000)
+        return None
+
+    def attempt(self, call: Callable[[], object]) -> str | None:
+        """For forms that show the problem next to the input: the message, or None when saved."""
+        error = self._run(call)
+        return error_text(error) if error else None
+
+    def act(self, call: Callable[[], object]) -> bool:
+        """For one-step actions with nothing typed to lose: a refusal is shown in a message box."""
+        error = self.attempt(call)
+        if error:
+            self.show_error(error)
+        return error is None
+
+    def attempt_progress(self, assignment_id: str, values: dict) -> tuple[str | None, str | None]:
+        """Save progress from the side form: (message, field to point at), both None when saved."""
+        error = self._run(lambda: self.service.update_progress(self.actor, assignment_id, **values))
+        return (error_text(error), error_field(error)) if error else (None, None)
+
+    # ----- actions (each takes plain values so tests can call them without a dialog)
 
     def create_project(self, name: str) -> bool:
         created: list[str] = []
@@ -231,18 +277,19 @@ class MainWindow(QMainWindow):
     def set_labels(self, scope_label: str, category_label: str) -> bool:
         return self.act(lambda: self.service.set_labels(self.actor, self.project_id, scope_label, category_label))
 
-    def add_work_items(self, values: dict) -> bool:
-        return self.act(
-            lambda: self.service.add_work_items(
-                self.actor,
-                self.project_id,
-                values["items"],
-                values["assignee_id"],
-                due_date=values["due_date"],
-                scope_id=values["scope_id"],
-                category_id=values["category_id"],
-            )
+    def _add_work_items(self, values: dict) -> Callable[[], object]:
+        return lambda: self.service.add_work_items(
+            self.actor,
+            self.project_id,
+            values["items"],
+            values["assignee_id"],
+            due_date=values["due_date"],
+            scope_id=values["scope_id"],
+            category_id=values["category_id"],
         )
+
+    def add_work_items(self, values: dict) -> bool:
+        return self.act(self._add_work_items(values))
 
     def save_progress(self, assignment_id: str, values: dict) -> bool:
         return self.act(lambda: self.service.update_progress(self.actor, assignment_id, **values))
@@ -256,6 +303,9 @@ class MainWindow(QMainWindow):
     def delete_work_item(self, work_item_id: str) -> bool:
         return self.act(lambda: self.service.delete_work_item(self.actor, work_item_id))
 
+    def review(self, assignment_id: str, decision: str, reason: str | None = None) -> bool:
+        return self.act(lambda: self.service.review_completion(self.actor, assignment_id, decision, reason))
+
     def open_link(self, url: str | None) -> bool:
         """Open a link in the browser. Only http(s): a link can come from someone else's data."""
         return is_web_link(url) and self._open_url(url)
@@ -263,15 +313,26 @@ class MainWindow(QMainWindow):
     def _open_url(self, url: str) -> bool:
         return QDesktopServices.openUrl(QUrl(url))
 
-    def review(self, assignment_id: str, decision: str, reason: str | None = None) -> bool:
-        return self.act(lambda: self.service.review_completion(self.actor, assignment_id, decision, reason))
+    def edit_progress(self, row: dict | None) -> None:
+        """Take the person to the progress entry of one of their own assignments."""
+        if not row or row["assignee_id"] != self.actor:
+            return
+        page = self.stack.currentWidget()
+        if not isinstance(page, WorkPage) or not page.select(row["assignment_id"]):
+            self.nav.setCurrentRow(MINE_INDEX)
+            page = self.mine_page
+            page.select(row["assignment_id"])
+        page.focus_form()
 
     # ----- dialogs (thin: collect values, then call an action above)
 
-    def _ask(self, title: str, label: str, action: Callable[[str], bool]) -> None:
-        text, accepted = QInputDialog.getText(self, title, label)
+    def _confirm(self, title: str, question: str) -> bool:
+        return QMessageBox.question(self, title, question) == QMessageBox.StandardButton.Yes
+
+    def ask_new_project(self) -> None:
+        name, accepted = QInputDialog.getText(self, "새 프로젝트", "프로젝트 이름")
         if accepted:
-            action(text)
+            self.create_project(name)
 
     def ask_work_item(self) -> None:
         if not self.project_id:
@@ -279,10 +340,11 @@ class MainWindow(QMainWindow):
         project = self.project_id
         scopes, categories = self.service.list_scopes(project), self.service.list_categories(project)
         if not scopes or not categories:
-            self.nav.setCurrentRow(MANAGE_INDEX)
+            self.show_manage()
             self.show_error("업무를 추가하려면 먼저 관리 화면에서 두 칸의 항목을 각각 하나 이상 만드세요.")
             return
-        dialog = WorkItemDialog(
+        # The dialog stays open, with everything typed, until the save goes through.
+        WorkItemDialog(
             scopes,
             categories,
             self.service.list_members(project),
@@ -290,21 +352,25 @@ class MainWindow(QMainWindow):
             self.service.is_editor(self.actor, project),
             self.labels,
             self,
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.add_work_items(dialog.values())
+            on_submit=lambda values: self.attempt(self._add_work_items(values)),
+        ).exec()
+
+    def ask_due_date(self, row: dict | None) -> None:
+        if not row:
+            return
+        DueDateDialog(
+            row["due_date"],
+            lambda values: self.attempt(
+                lambda: self.service.set_due_date(self.actor, row["assignment_id"], values["due_date"])
+            ),
+            self,
+        ).exec()
 
     def ask_make_editor(self, user_id: str | None) -> None:
-        if not user_id:
-            return
-        answer = QMessageBox.question(
-            self, "편집자 지정", "이 구성원을 편집자로 지정할까요? 편집자는 업무 정의와 완료 확인을 할 수 있습니다."
-        )
-        if answer == QMessageBox.StandardButton.Yes:
+        if user_id and self._confirm(
+            "편집자 지정", "이 구성원을 편집자로 지정할까요? 편집자는 업무 정의와 완료 확인을 할 수 있습니다."
+        ):
             self.add_editor(user_id)
-
-    def _confirm(self, title: str, question: str) -> bool:
-        return QMessageBox.question(self, title, question) == QMessageBox.StandardButton.Yes
 
     def ask_rename_item(self, kind: str, item_id: str | None) -> None:
         if not item_id:
@@ -330,35 +396,11 @@ class MainWindow(QMainWindow):
             self.remove_editor(user_id)
 
     def ask_delete(self, row: dict | None) -> None:
-        if not row:
-            return
-        answer = QMessageBox.question(
-            self, "업무 삭제", "이 업무를 삭제할까요? 목록과 집계에서 빠지고 화면에서 되돌릴 수 없습니다. 기록은 남습니다."
-        )
-        if answer == QMessageBox.StandardButton.Yes:
+        if row and self._confirm(
+            "업무 삭제", "이 업무를 삭제할까요? 목록과 집계에서 빠지고 화면에서 되돌릴 수 없습니다. 기록은 남습니다."
+        ):
             self.delete_work_item(row["work_item_id"])
 
-    def edit_progress(self, row: dict | None) -> None:
-        if not row or row["assignee_id"] != self.actor:
-            return
-        dialog = ProgressDialog(row, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.save_progress(row["assignment_id"], dialog.values())
-
-    def ask_due_date(self, row: dict | None) -> None:
-        if not row:
-            return
-        text, accepted = QInputDialog.getText(
-            self, "기한 변경", "기한 (YYYY-MM-DD, 비우면 기한 없음)", text=row["due_date"] or ""
-        )
-        if accepted:
-            self.set_due_date(row["assignment_id"], text.strip() or None)
-
     def ask_cancel(self, row: dict | None) -> None:
-        if not row:
-            return
-        answer = QMessageBox.question(
-            self, "배정 취소", "이 배정을 취소할까요? 진행 기록은 남지만 목록과 집계에서 빠집니다."
-        )
-        if answer == QMessageBox.StandardButton.Yes:
+        if row and self._confirm("배정 취소", "이 배정을 취소할까요? 진행 기록은 남지만 목록과 집계에서 빠집니다."):
             self.cancel_assignment(row["assignment_id"])

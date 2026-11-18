@@ -1,8 +1,14 @@
+"""Input forms. Each one keeps what was typed until the save actually succeeds."""
+
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from collections.abc import Callable
+
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -20,55 +26,103 @@ from PySide6.QtWidgets import (
 
 from workboard.ui.text import DEFAULT_LABELS, RESULT, STATUS
 
-
-class _FormDialog(QDialog):
-    def __init__(self, title: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setMinimumWidth(420)
-        self.form = QFormLayout(self)
-
-    def add_buttons(self, accept_label: str) -> None:
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(accept_label)
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        self.form.addRow(buttons)
+# A submit callback returns None when the change was saved, or the message to show.
+Submit = Callable[[dict], "str | None"]
 
 
-class ProgressDialog(_FormDialog):
-    """Assignee's progress entry. Choosing 완료 asks for the evidence."""
+def message_label() -> QLabel:
+    """Inline problem text. Plain text only: it can quote what a person typed."""
+    label = QLabel()
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    label.setWordWrap(True)
+    label.setStyleSheet("color: #e5534b;")
+    label.hide()
+    return label
 
-    def __init__(self, row: dict, parent: QWidget | None = None) -> None:
-        super().__init__("진행 입력", parent)
+
+def show_message(label: QLabel, text: str | None) -> None:
+    label.setText(text or "")
+    label.setVisible(bool(text))
+
+
+class DueDate(QWidget):
+    """A date picker with an explicit 'no due date' choice, so nobody types a date by hand."""
+
+    def __init__(self, current: str | None = None) -> None:
+        super().__init__()
+        self.enabled = QCheckBox("기한 있음")
+        self.date = QDateEdit()
+        self.date.setCalendarPopup(True)
+        self.date.setDisplayFormat("yyyy-MM-dd")
+        parsed = QDate.fromString(current or "", "yyyy-MM-dd")
+        self.date.setDate(parsed if parsed.isValid() else QDate.currentDate())
+        self.enabled.setChecked(parsed.isValid())
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.enabled)
+        layout.addWidget(self.date, 1)
+        self.enabled.toggled.connect(self.date.setEnabled)
+        self.date.setEnabled(self.enabled.isChecked())
+
+    def value(self) -> str | None:
+        return self.date.date().toString("yyyy-MM-dd") if self.enabled.isChecked() else None
+
+
+class ProgressForm(QWidget):
+    """The assignee's progress entry, shown beside the list. Only the fields the status needs appear."""
+
+    def __init__(self, on_save: Callable[[str, dict], "str | None"]) -> None:
+        super().__init__()
+        self.on_save = on_save
+        self.assignment_id: str | None = None
         self.status = QComboBox()
         for value, label in STATUS.items():
             self.status.addItem(label, value)
         self.progress = QSpinBox()
         self.progress.setRange(0, 100)
         self.progress.setSuffix(" %")
-        self.hold_reason = QLineEdit(row["hold_reason"] or "")
-        self.evidence_ref = QLineEdit(row["evidence_ref"] or "")
+        self.hold_reason = QLineEdit()
+        self.hold_reason.setPlaceholderText("무엇을 기다리는지")
+        self.evidence_ref = QLineEdit()
         self.evidence_ref.setPlaceholderText("결과 문서 링크 또는 항목 ID")
-        self.evidence_note = QLineEdit(row["evidence_note"] or "")
+        self.evidence_note = QLineEdit()
         self.evidence_note.setPlaceholderText("무엇을 확인했는지 한 줄")
         self.result = QComboBox()
         self.result.addItem("선택 안 함", None)
         for value, label in RESULT.items():
             self.result.addItem(label, value)
+        self.message = message_label()
+        self.save_button = QPushButton("저장")
+        self.fields = {
+            "progress": self.progress,
+            "hold_reason": self.hold_reason,
+            "evidence_ref": self.evidence_ref,
+        }
+        self.form = QFormLayout(self)
+        self.form.setContentsMargins(0, 0, 0, 0)
         self.form.addRow("상태", self.status)
         self.form.addRow("진행도", self.progress)
-        self.form.addRow("보류 사유 (보류일 때 필수)", self.hold_reason)
-        self.form.addRow("근거 참조 (완료일 때 필수)", self.evidence_ref)
+        self.form.addRow("보류 사유", self.hold_reason)
+        self.form.addRow("완료 근거", self.evidence_ref)
         self.form.addRow("근거 설명", self.evidence_note)
         self.form.addRow("결과", self.result)
-        self.add_buttons("저장")
+        self.form.addRow(self.message)
+        self.form.addRow(self.save_button)
+        self.status.currentIndexChanged.connect(self._sync)
+        self.save_button.clicked.connect(self.save)
+        for field in (self.hold_reason, self.evidence_ref, self.evidence_note):
+            field.returnPressed.connect(self.save)
 
+    def load(self, row: dict) -> None:
+        """Show the saved values of one assignment, discarding anything typed for another."""
+        self.assignment_id = row["assignment_id"]
         self.status.setCurrentIndex(self.status.findData(row["status"]))
         self.progress.setValue(row["progress"])
+        self.hold_reason.setText(row["hold_reason"] or "")
+        self.evidence_ref.setText(row["evidence_ref"] or "")
+        self.evidence_note.setText(row["evidence_note"] or "")
         self.result.setCurrentIndex(max(0, self.result.findData(row["result"])))
-        self.status.currentIndexChanged.connect(self._sync)
+        show_message(self.message, None)
         self._sync()
 
     def _sync(self) -> None:
@@ -79,9 +133,9 @@ class ProgressDialog(_FormDialog):
         elif self.progress.value() == 100:
             self.progress.setValue(99)
         self.progress.setEnabled(fixed is None)
-        self.hold_reason.setEnabled(status == "on_hold")
+        self.form.setRowVisible(self.hold_reason, status == "on_hold")
         for field in (self.evidence_ref, self.evidence_note, self.result):
-            field.setEnabled(status == "done")
+            self.form.setRowVisible(field, status == "done")
 
     def values(self) -> dict:
         return {
@@ -92,6 +146,60 @@ class ProgressDialog(_FormDialog):
             "evidence_ref": self.evidence_ref.text(),
             "evidence_note": self.evidence_note.text(),
         }
+
+    def save(self) -> bool:
+        if not self.assignment_id:
+            return False
+        error = self.on_save(self.assignment_id, self.values())
+        show_message(self.message, error)
+        return error is None
+
+    def point_at(self, field: str | None) -> None:
+        """Put the cursor in the field a refusal was about."""
+        widget = self.fields.get(field or "")
+        if widget and not widget.isHidden():
+            widget.setFocus()
+
+
+class _FormDialog(QDialog):
+    """A dialog that closes only after its submit callback reports success."""
+
+    def __init__(self, title: str, on_submit: Submit | None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.on_submit = on_submit
+        self.setWindowTitle(title)
+        self.setMinimumWidth(420)
+        self.form = QFormLayout(self)
+        self.message = message_label()
+
+    def add_buttons(self, accept_label: str) -> None:
+        self.form.addRow(self.message)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(accept_label)
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self.form.addRow(buttons)
+
+    def values(self) -> dict:
+        raise NotImplementedError
+
+    def accept(self) -> None:
+        error = self.on_submit(self.values()) if self.on_submit else None
+        show_message(self.message, error)
+        if error is None:
+            super().accept()
+
+
+class DueDateDialog(_FormDialog):
+    def __init__(self, current: str | None, on_submit: Submit | None = None, parent: QWidget | None = None) -> None:
+        super().__init__("기한 변경", on_submit, parent)
+        self.due_date = DueDate(current)
+        self.form.addRow("기한", self.due_date)
+        self.add_buttons("저장")
+
+    def values(self) -> dict:
+        return {"due_date": self.due_date.value()}
 
 
 def parse_work_lines(text: str) -> list[dict]:
@@ -121,8 +229,9 @@ class WorkItemDialog(_FormDialog):
         editor: bool,
         labels: tuple[str, str] = DEFAULT_LABELS,
         parent: QWidget | None = None,
+        on_submit: Submit | None = None,
     ) -> None:
-        super().__init__("업무 추가", parent)
+        super().__init__("업무 추가", on_submit, parent)
         self.setMinimumWidth(600)
         self.rows: list[tuple[QWidget, QLineEdit, QLineEdit, QLineEdit]] = []
         self.counter = QLabel()
@@ -163,8 +272,7 @@ class WorkItemDialog(_FormDialog):
         self.assignee.setCurrentIndex(max(0, self.assignee.findData(actor)))
         self.assignee.setEditable(editor)
         self.assignee.setEnabled(editor)
-        self.due_date = QLineEdit()
-        self.due_date.setPlaceholderText("YYYY-MM-DD (비워 두면 기한 없음)")
+        self.due_date = DueDate()
         self.form.addRow(self.modes)
         self.form.addRow("", self.counter)
         for label, field in ((labels[0], self.scope), (labels[1], self.category)):
@@ -191,11 +299,12 @@ class WorkItemDialog(_FormDialog):
         title, reference, link = QLineEdit(), QLineEdit(), QLineEdit()
         title.setPlaceholderText("업무 제목")
         reference.setPlaceholderText("외부 참조 ID")
-        link.setPlaceholderText("링크")
+        link.setPlaceholderText("링크 (https://…)")
         remove = QPushButton("−")
         remove.setFixedWidth(30)
         remove.setAutoDefault(False)
         remove.setToolTip("이 줄 지우기")
+        remove.setAccessibleName("이 줄 지우기")
         layout.addWidget(title, 3)
         layout.addWidget(reference, 1)
         layout.addWidget(link, 2)
@@ -246,5 +355,5 @@ class WorkItemDialog(_FormDialog):
             "scope_id": self.scope.currentData(),
             "category_id": self.category.currentData(),
             "assignee_id": self.assignee_id(),
-            "due_date": self.due_date.text().strip() or None,
+            "due_date": self.due_date.value(),
         }
