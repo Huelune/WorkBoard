@@ -8,7 +8,7 @@
 
 ### 왜
 
-아래 절들은 아직 main에 병합되지 않은 `feat/stage3-import` 브랜치의 코드로 돌린다. 화면과 엑셀 가져오기가 그 브랜치에 있다.
+아래 절들은 `main`의 코드로 돌린다. 화면과 엑셀 가져오기가 `main`에 병합됐다. 코드가 바뀌면 이 절을 다시 돌려 최신으로 맞춘다.
 
 ### 실행
 
@@ -19,7 +19,7 @@ for /f "delims=" %i in ('git rev-parse --show-toplevel') do set ROOT=%i
 ```
 
 ```cmd
-git -C "%ROOT%" fetch origin && git -C "%ROOT%" switch feat/stage3-import && git -C "%ROOT%" pull
+git -C "%ROOT%" fetch origin && git -C "%ROOT%" switch main && git -C "%ROOT%" pull
 ```
 
 ```cmd
