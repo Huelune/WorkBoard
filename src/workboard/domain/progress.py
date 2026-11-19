@@ -61,6 +61,18 @@ def clean_text(value: object, label: str, *, required: bool = False) -> str | No
     return text or None
 
 
+def is_web_link(value: object) -> bool:
+    """Only http(s) links are ever opened; anything else is treated as plain text."""
+    return isinstance(value, str) and value.startswith(("http://", "https://"))
+
+
+def clean_link(value: object, label: str) -> str | None:
+    text = clean_text(value, label)
+    if text and not is_web_link(text):
+        raise ValidationError(f"{label} must start with http:// or https://")
+    return text
+
+
 def validate_progress(values: ProgressValues) -> ProgressValues:
     """Check the status rules and return cleaned values.
 
@@ -115,6 +127,11 @@ def validate_due_date(value: str | None) -> str | None:
     if parsed.isoformat() != value:
         raise ValidationError("due date must be YYYY-MM-DD")
     return value
+
+
+def is_overdue(due_date: str | None, status: str, today: str) -> bool:
+    """Past its due date and not reported done. Dates are YYYY-MM-DD strings."""
+    return bool(due_date) and due_date < today and status != Status.DONE
 
 
 def history_hash(prev_hash: str, fields: dict) -> str:

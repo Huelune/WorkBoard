@@ -24,12 +24,15 @@ from workboard.domain import (
     Status,
     ValidationError,
     WorkItemId,
+    clean_link,
     clean_text,
     history_hash,
+    is_overdue,
     review_state,
     validate_due_date,
     validate_progress,
 )
+from workboard.domain.passwords import DUMMY_HASH, hash_password, validate_new_password, verify_password
 from workboard.storage import Repository
 from workboard.storage.database import APPEND_ONLY_TABLES
 
@@ -60,6 +63,7 @@ _HASHED = {
 }
 _NOT_STARTED = asdict(ProgressValues(Status.NOT_STARTED.value, 0))
 _WEEK = timedelta(days=7)
+NO_ACCOUNT = "no account with that ID"
 
 
 def _is(row: dict, state: ReviewState) -> bool:
@@ -67,7 +71,7 @@ def _is(row: dict, state: ReviewState) -> bool:
 
 
 def _overdue(row: dict, today: str) -> bool:
-    return bool(row["due_date"]) and row["due_date"] < today and row["status"] != Status.DONE
+    return is_overdue(row["due_date"], row["status"], today)
 
 
 def _counts(rows: list[dict], today: str) -> dict:
@@ -171,13 +175,75 @@ class WorkBoardService:
         return isinstance(actor, str) and self._repo.is_editor(project_id, actor)
 
     def _in_project(self, table: str, record_id: str | None, project_id: str) -> None:
-        if record_id is not None and self._get(table, record_id)["project_id"] != project_id:
+        if record_id is None:
+            return
+        record = self._get(table, record_id)
+        if record["project_id"] != project_id:
             raise ValidationError(f"{table} belongs to another project")
+        if record["deleted"]:
+            raise ValidationError(f"{table} was deleted and cannot be used for new work")
 
     def _define(self, table: str, project_id: str, record_id: str, **values: object) -> str:
         self._repo.insert(table, id=record_id, project_id=project_id, **values)
         self._repo.mark_dirty("definition", project_id, "", self._now())
         return record_id
+
+    # ----- accounts (who is at the keyboard)
+    # shortcut: no lockout after repeated wrong passwords, add one if a shared PC makes guessing realistic.
+    # Nobody can set another person's password, editors included: whoever could would be able to log in
+    # as an assignee and write their progress, or take over an account by first adding it as a member.
+    # A forgotten password means a new account. must_change is only ever set in files from the short time
+    # resets existed; check_login refuses those accounts.
+
+    def has_accounts(self) -> bool:
+        return self._repo.account_count() > 0
+
+    def create_account(self, user_id: str, password: str) -> None:
+        """Sign up on this PC. The ID is what editors put on the member list."""
+        user_id = clean_text(user_id, "user", required=True)
+        password_hash = hash_password(validate_new_password(user_id, password))
+        with self._write():
+            if self._repo.get_account(user_id):
+                raise ValidationError("that ID is already taken")
+            # Signing up must not hand over an ID that projects already trust. The one exception is
+            # the very first account on this PC, which claims the data of whoever set the file up.
+            if self._repo.account_count() and self._repo.is_referenced(user_id):
+                raise PermissionDenied("that ID is already used in a project")
+            self._repo.insert(
+                "account", user_id=user_id, password_hash=password_hash, must_change=0, created_at=self._now()
+            )
+
+    def has_account(self, user_id: str) -> bool:
+        return isinstance(user_id, str) and self._repo.get_account(user_id.strip()) is not None
+
+    def _require_account(self, user_id: str) -> None:
+        """Once accounts exist, a project may only name people who have one (sign up first, then get added).
+
+        Otherwise an editor could park an ID in a project and nobody could ever claim it.
+        """
+        if self._repo.account_count() and not self._repo.get_account(user_id):
+            raise ValidationError(NO_ACCOUNT)
+
+    def check_login(self, user_id: str, password: str) -> None:
+        """Raise PermissionDenied unless the ID and password match.
+
+        An unknown ID and a wrong password fail the same way and take the same time.
+        """
+        account = self._repo.get_account(user_id.strip()) if isinstance(user_id, str) else None
+        matches = verify_password(password, account["password_hash"] if account else DUMMY_HASH)
+        # must_change marks a password someone else set while resets briefly existed. That person
+        # still knows it, so the account stays shut; its owner signs up again under a new ID.
+        if not (account and matches) or account["must_change"]:
+            raise PermissionDenied("wrong ID or password")
+
+    def change_password(self, user_id: str, old_password: str, new_password: str) -> None:
+        self.check_login(user_id, old_password)
+        user_id = user_id.strip()
+        if new_password == old_password:
+            raise ValidationError("the new password must differ from the old one")
+        password_hash = hash_password(validate_new_password(user_id, new_password))
+        with self._write():
+            self._repo.set_password(user_id, password_hash)
 
     # ----- definitions (project editors)
 
@@ -192,6 +258,7 @@ class WorkBoardService:
                 "project", id=project_id, name=name, description=description or "", created_at=now
             )
             self._repo.add_editor(project_id, actor)
+            self._repo.add_member(project_id, actor)
             self._repo.mark_dirty("definition", project_id, "", now)
         return project_id
 
@@ -199,8 +266,147 @@ class WorkBoardService:
         user_id = clean_text(user_id, "user", required=True)
         with self._write():
             self._require_editor(actor, project_id)
+            self._require_account(user_id)
             self._repo.add_editor(project_id, user_id)
+            self._repo.add_member(project_id, user_id)
             self._repo.mark_dirty("definition", project_id, "", self._now())
+
+    def _item(self, kind: str, item_id: str) -> dict:
+        if kind not in ("scope", "category"):
+            raise ValidationError("unknown kind of item")
+        return self._get(kind, item_id)
+
+    def rename_item(self, actor: str, kind: str, item_id: str, name: str) -> None:
+        """Rename a scope or category item; work that uses it shows the new name."""
+        name = clean_text(name, "name", required=True)
+        with self._write():
+            item = self._item(kind, item_id)
+            self._require_editor(actor, item["project_id"])
+            self._repo.set_field(kind, item_id, "name", name)
+            self._repo.mark_dirty("definition", item["project_id"], "", self._now())
+
+    def delete_item(self, actor: str, kind: str, item_id: str) -> None:
+        """Retire a scope or category item: it leaves the pick lists, old work keeps showing it."""
+        with self._write():
+            item = self._item(kind, item_id)
+            self._require_editor(actor, item["project_id"])
+            self._repo.set_field(kind, item_id, "deleted", 1)
+            self._repo.mark_dirty("definition", item["project_id"], "", self._now())
+
+    def remove_member(self, actor: str, project_id: str, user_id: str) -> None:
+        """Take someone off the member list. Their assignments and progress stay as they are."""
+        user_id = clean_text(user_id, "user", required=True)
+        with self._write():
+            self._require_editor(actor, project_id)
+            if self._repo.is_editor(project_id, user_id):
+                raise ValidationError("remove the editor role first")
+            self._repo.remove_member(project_id, user_id)
+            self._repo.mark_dirty("definition", project_id, "", self._now())
+
+    def remove_editor(self, actor: str, project_id: str, user_id: str) -> None:
+        """Take the editor role away; the person stays a member. A project keeps at least one editor."""
+        user_id = clean_text(user_id, "user", required=True)
+        with self._write():
+            self._require_editor(actor, project_id)
+            if not self._repo.is_editor(project_id, user_id):
+                raise ValidationError("that member is not an editor")
+            if self._repo.editor_count(project_id) == 1:
+                raise ValidationError("a project needs at least one editor")
+            self._repo.remove_editor(project_id, user_id)
+            self._repo.mark_dirty("definition", project_id, "", self._now())
+
+    def set_labels(self, actor: str, project_id: str, scope_label: str, category_label: str) -> None:
+        """Rename the project's two grouping fields, e.g. 코드 버전 and 검증 분야."""
+        scope_label = clean_text(scope_label, "scope label", required=True)
+        category_label = clean_text(category_label, "category label", required=True)
+        with self._write():
+            self._require_editor(actor, project_id)
+            self._repo.set_field("project", project_id, "scope_label", scope_label)
+            self._repo.set_field("project", project_id, "category_label", category_label)
+            self._repo.mark_dirty("definition", project_id, "", self._now())
+
+    def add_member(self, actor: str, project_id: str, user_id: str, display_name: str | None = None) -> None:
+        """Members can be picked as assignees and may add work for themselves."""
+        user_id = clean_text(user_id, "user", required=True)
+        display_name = clean_text(display_name, "display name")
+        with self._write():
+            self._require_editor(actor, project_id)
+            self._require_account(user_id)
+            self._repo.add_member(project_id, user_id, display_name)
+            self._repo.mark_dirty("definition", project_id, "", self._now())
+
+    def add_work_items(
+        self,
+        actor: str,
+        project_id: str,
+        items: list[dict],
+        assignee_id: str,
+        due_date: str | None = None,
+        scope_id: str | None = None,
+        category_id: str | None = None,
+    ) -> list[str]:
+        """Add several work items, each with one assignment, in one transaction.
+
+        An editor may assign them to anyone. A member who is not an editor may add work
+        only for themselves; `created_by` keeps that visible. Both grouping fields are
+        required. Returns the assignment IDs.
+        """
+        assignee_id = clean_text(assignee_id, "assignee", required=True)
+        due_date = validate_due_date(due_date)
+        if not isinstance(items, list) or not items or not all(isinstance(item, dict) for item in items):
+            raise ValidationError("at least one work item is required")
+        cleaned = []
+        for number, item in enumerate(items, start=1):
+            try:
+                cleaned.append(
+                    (
+                        clean_text(item.get("title"), "title", required=True),
+                        clean_text(item.get("external_ref"), "external reference"),
+                        clean_link(item.get("external_url"), "external link"),
+                    )
+                )
+            except ValidationError as error:
+                error.row = number  # lets the screen say which line to fix
+                raise
+        if scope_id is None or category_id is None:
+            raise ValidationError("both grouping fields are required for new work")
+        with self._write():
+            self._get("project", project_id)
+            if not self._is_editor(project_id, actor):
+                if not (isinstance(actor, str) and self._repo.is_member(project_id, actor)):
+                    raise PermissionDenied("only project members may add work")
+                if assignee_id != actor:
+                    raise PermissionDenied("members may add work only for themselves")
+            self._require_account(assignee_id)
+            self._in_project("scope", scope_id, project_id)
+            self._in_project("category", category_id, project_id)
+            now = self._now()
+            assignment_ids = []
+            for title, external_ref, external_url in cleaned:
+                work_item_id = WorkItemId.new().value
+                self._repo.insert(
+                    "work_item",
+                    id=work_item_id,
+                    project_id=project_id,
+                    title=title,
+                    scope_id=scope_id,
+                    category_id=category_id,
+                    external_ref=external_ref,
+                    external_url=external_url,
+                    created_by=actor,
+                )
+                assignment_ids.append(str(uuid4()))
+                self._repo.insert(
+                    "assignment",
+                    id=assignment_ids[-1],
+                    work_item_id=work_item_id,
+                    assignee_id=assignee_id,
+                    due_date=due_date,
+                    created_at=now,
+                )
+            self._repo.add_member(project_id, assignee_id)
+            self._repo.mark_dirty("definition", project_id, "", now)
+            return assignment_ids
 
     def create_scope(
         self, actor: str, project_id: str, name: str, kind: str = "", parent_id: str | None = None
@@ -243,7 +449,8 @@ class WorkBoardService:
                 scope_id=scope_id,
                 category_id=category_id,
                 external_ref=clean_text(external_ref, "external reference"),
-                external_url=clean_text(external_url, "external link"),
+                external_url=clean_link(external_url, "external link"),
+                created_by=actor,
             )
 
     def delete_work_item(self, actor: str, work_item_id: str) -> None:
@@ -262,6 +469,7 @@ class WorkBoardService:
             self._require_editor(actor, item["project_id"])
             if item["deleted"]:
                 raise ValidationError("work item is deleted")
+            self._require_account(assignee_id)
             now = self._now()
             self._repo.insert(
                 "assignment",
@@ -271,6 +479,7 @@ class WorkBoardService:
                 due_date=due_date,
                 created_at=now,
             )
+            self._repo.add_member(item["project_id"], assignee_id)
             self._repo.mark_dirty("definition", item["project_id"], "", now)
         return assignment_id
 
@@ -430,6 +639,17 @@ class WorkBoardService:
     def pending_sync_count(self) -> int:
         return self._repo.outbox_count()
 
+    def is_editor(self, actor: str, project_id: str) -> bool:
+        """For the UI to enable editor controls; the write methods still check for themselves."""
+        return isinstance(project_id, str) and self._is_editor(project_id, actor)
+
+    def is_member(self, actor: str, project_id: str) -> bool:
+        return isinstance(project_id, str) and isinstance(actor, str) and self._repo.is_member(project_id, actor)
+
+    def list_members(self, project_id: str) -> list[dict]:
+        self._get("project", project_id)
+        return [{**member, "is_editor": bool(member["is_editor"])} for member in self._repo.members(project_id)]
+
     # ----- reads (anyone)
     # shortcut: aggregates count rows in Python per call, move to SQL if a project passes ~10k assignments.
 
@@ -444,13 +664,13 @@ class WorkBoardService:
 
     # A blank or unknown project is NotFound, so it can never widen a listing to every project.
 
-    def list_scopes(self, project_id: str) -> list[dict]:
+    def list_scopes(self, project_id: str, include_deleted: bool = False) -> list[dict]:
         self._get("project", project_id)
-        return self._repo.listing("scope", project_id)
+        return self._repo.listing("scope", project_id, live_only=not include_deleted)
 
-    def list_categories(self, project_id: str) -> list[dict]:
+    def list_categories(self, project_id: str, include_deleted: bool = False) -> list[dict]:
         self._get("project", project_id)
-        return self._repo.listing("category", project_id, "position, rowid")
+        return self._repo.listing("category", project_id, "position, rowid", live_only=not include_deleted)
 
     def list_assignments(
         self,
@@ -486,7 +706,14 @@ class WorkBoardService:
             if _is(row, ReviewState.PENDING) and row["assignee_id"] != actor
         ]
 
-    def group_summary(self, project_id: str, by: str, today: str) -> list[dict]:
+    def group_summary(
+        self,
+        project_id: str,
+        by: str,
+        today: str,
+        scope_id: str | None = None,
+        category_id: str | None = None,
+    ) -> list[dict]:
         """One line per assignee or category. average_progress is self-reported; trust confirmed."""
         if by not in ("assignee", "category"):
             raise ValidationError("group by assignee or category")
@@ -499,7 +726,9 @@ class WorkBoardService:
                 "average_progress": round(sum(r["progress"] for r in rows) / len(rows), 1),
                 **_counts(rows, today),
             }
-            for key, rows in _group(self._rows(project_id=project_id), f"{by}_id").items()
+            for key, rows in _group(
+                self._rows(project_id=project_id, scope_id=scope_id, category_id=category_id), f"{by}_id"
+            ).items()
         ]
 
     def project_status(self, project_id: str, today: str) -> dict:
@@ -536,6 +765,7 @@ class WorkBoardService:
                     "reported": pace["reported"],
                     "confirmed": pace["confirmed"],
                     "rejected": rejected.get(assignee_id, 0),
+                    "self_added": sum(r["created_by"] == assignee_id for r in rows),
                     "per_week": pace["per_week"],
                     "weekly": pace["weekly"],
                 }

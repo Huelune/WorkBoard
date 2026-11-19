@@ -5,6 +5,7 @@ import unittest
 
 from support import temp_db_path
 from workboard.storage import Repository, open_database
+from workboard.storage.database import MIGRATIONS
 
 TABLES = {
     "project",
@@ -60,13 +61,13 @@ class StorageTests(unittest.TestCase):
     def test_schema_is_created_and_versioned(self) -> None:
         names = {row[0] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         self.assertLessEqual(TABLES, names)
-        self.assertEqual(self.conn.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(self.conn.execute("PRAGMA user_version").fetchone()[0], len(MIGRATIONS))
 
     def test_data_survives_reopen(self) -> None:
         self.seed_history()
         self.conn.close()
         self.conn = open_database(self.path)
-        self.assertEqual(self.conn.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(self.conn.execute("PRAGMA user_version").fetchone()[0], len(MIGRATIONS))
         rows = Repository(self.conn).assignment_rows(project_id="p1")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["title"], "T")

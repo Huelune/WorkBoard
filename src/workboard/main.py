@@ -6,11 +6,17 @@ from workboard import __version__
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="WorkBoard project foundation")
+    parser = argparse.ArgumentParser(description="WorkBoard desktop app")
     parser.add_argument("--version", action="version", version=f"WorkBoard {__version__}")
     parser.parse_args()
-    print("WorkBoard domain, local storage and services are ready. The UI is not implemented yet.")
-    return 0
+    try:
+        from workboard.ui.app import run
+    except ImportError as error:
+        if not (error.name or "").startswith("PySide6"):
+            raise
+        print("PySide6 is not installed. Install it with: python -m pip install PySide6")
+        return 1
+    return run()
 
 
 if __name__ == "__main__":

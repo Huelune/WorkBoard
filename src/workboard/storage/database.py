@@ -112,6 +112,39 @@ CREATE TABLE sync_outbox (
 );
 """
     + "".join(_APPEND_ONLY.format(table=table) for table in APPEND_ONLY_TABLES),
+    # 2: project members (who can be picked as an assignee, with a display name) and who added a work item.
+    """
+CREATE TABLE project_member (
+    project_id TEXT NOT NULL REFERENCES project(id),
+    user_id TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (project_id, user_id)
+);
+INSERT OR IGNORE INTO project_member (project_id, user_id)
+    SELECT project_id, user_id FROM project_editor;
+INSERT OR IGNORE INTO project_member (project_id, user_id)
+    SELECT w.project_id, a.assignee_id FROM assignment a JOIN work_item w ON w.id = a.work_item_id;
+ALTER TABLE work_item ADD COLUMN created_by TEXT;
+""",
+    # 3: each project names its two grouping fields (scope, category) in its own words.
+    """
+ALTER TABLE project ADD COLUMN scope_label TEXT NOT NULL DEFAULT '대상 버전';
+ALTER TABLE project ADD COLUMN category_label TEXT NOT NULL DEFAULT '업무 분야';
+""",
+    # 4: field items are retired, not erased, because existing work items still point at them.
+    """
+ALTER TABLE scope ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE category ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
+""",
+    # 5: local accounts. Only a salted hash is stored, never the password.
+    """
+CREATE TABLE account (
+    user_id TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    must_change INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+""",
 ]
 
 

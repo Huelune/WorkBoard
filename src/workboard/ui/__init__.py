@@ -1,1 +1,1 @@
-"""The selected user interface will be implemented here."""
+"""PySide6 desktop UI. Import submodules directly; this package stays importable without PySide6."""

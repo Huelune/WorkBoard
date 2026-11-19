@@ -200,8 +200,8 @@ class AggregateTests(ReadCase):
         self.assertEqual(
             self.svc.assignee_pace(START, END, self.p1),
             [
-                {"assignee_id": "u1", "assigned": 3, "reported": 2, "confirmed": 1, "rejected": 0, "per_week": 0.5, "weekly": [1, 0]},
-                {"assignee_id": "u2", "assigned": 3, "reported": 2, "confirmed": 1, "rejected": 1, "per_week": 0.5, "weekly": [0, 1]},
+                {"assignee_id": "u1", "assigned": 3, "reported": 2, "confirmed": 1, "rejected": 0, "self_added": 0, "per_week": 0.5, "weekly": [1, 0]},
+                {"assignee_id": "u2", "assigned": 3, "reported": 2, "confirmed": 1, "rejected": 1, "self_added": 0, "per_week": 0.5, "weekly": [0, 1]},
             ],
         )
 
@@ -209,7 +209,7 @@ class AggregateTests(ReadCase):
         pace = {row["assignee_id"]: row for row in self.svc.assignee_pace(START, END)}
         self.assertEqual(
             pace["u1"],
-            {"assignee_id": "u1", "assigned": 4, "reported": 3, "confirmed": 2, "rejected": 0, "per_week": 1.0, "weekly": [2, 0]},
+            {"assignee_id": "u1", "assigned": 4, "reported": 3, "confirmed": 2, "rejected": 0, "self_added": 0, "per_week": 1.0, "weekly": [2, 0]},
         )
         self.assertEqual(pace["u3"]["assigned"], 1)
         self.assertEqual(pace["u3"]["weekly"], [0, 0])

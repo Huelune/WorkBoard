@@ -6,7 +6,7 @@ import sqlite3
 
 _ASSIGNMENT_ROWS = """
 SELECT a.id AS assignment_id, w.project_id, w.id AS work_item_id, w.title,
-       w.scope_id, w.category_id, w.external_ref, w.external_url,
+       w.scope_id, w.category_id, w.external_ref, w.external_url, w.created_by,
        a.assignee_id, a.due_date,
        COALESCE(p.status, 'not_started') AS status, COALESCE(p.progress, 0) AS progress,
        p.result, p.hold_reason, p.evidence_ref, p.evidence_note,
@@ -57,10 +57,13 @@ class Repository:
     def set_field(self, table: str, record_id: str, column: str, value: object) -> None:
         self._conn.execute(f"UPDATE {table} SET {column} = ? WHERE id = ?", (value, record_id))
 
-    def listing(self, table: str, project_id: str | None = None, order: str = "rowid") -> list[dict]:
+    def listing(
+        self, table: str, project_id: str | None = None, order: str = "rowid", live_only: bool = False
+    ) -> list[dict]:
         if project_id is None:
             return self.all(f"SELECT * FROM {table} ORDER BY {order}")
-        return self.all(f"SELECT * FROM {table} WHERE project_id = ? ORDER BY {order}", (project_id,))
+        live = " AND deleted = 0" if live_only else ""
+        return self.all(f"SELECT * FROM {table} WHERE project_id = ?{live} ORDER BY {order}", (project_id,))
 
     def is_editor(self, project_id: str, user_id: str) -> bool:
         return (
@@ -73,6 +76,72 @@ class Repository:
     def add_editor(self, project_id: str, user_id: str) -> None:
         self._conn.execute(
             "INSERT OR IGNORE INTO project_editor (project_id, user_id) VALUES (?, ?)", (project_id, user_id)
+        )
+
+    def add_member(self, project_id: str, user_id: str, display_name: str | None = None) -> None:
+        """Add a member, or update the display name of an existing one when a name is given."""
+        self._conn.execute(
+            "INSERT OR IGNORE INTO project_member (project_id, user_id) VALUES (?, ?)", (project_id, user_id)
+        )
+        if display_name:
+            self._conn.execute(
+                "UPDATE project_member SET display_name = ? WHERE project_id = ? AND user_id = ?",
+                (display_name, project_id, user_id),
+            )
+
+    def get_account(self, user_id: str) -> dict | None:
+        return self.one("SELECT * FROM account WHERE user_id = ?", (user_id,))
+
+    def is_referenced(self, user_id: str) -> bool:
+        """True when any project already names this ID as a member, editor, assignee or author."""
+        places = (
+            ("project_member", "user_id"),
+            ("project_editor", "user_id"),
+            ("assignment", "assignee_id"),
+            ("work_item", "created_by"),
+            ("progress_history", "author_id"),
+            ("completion_review", "reviewer_id"),
+        )
+        return any(
+            self.one(f"SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1", (user_id,)) for table, column in places
+        )
+
+    def account_count(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM account").fetchone()[0]
+
+    def set_password(self, user_id: str, password_hash: str) -> None:
+        self._conn.execute("UPDATE account SET password_hash = ? WHERE user_id = ?", (password_hash, user_id))
+
+    def remove_member(self, project_id: str, user_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM project_member WHERE project_id = ? AND user_id = ?", (project_id, user_id)
+        )
+
+    def remove_editor(self, project_id: str, user_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM project_editor WHERE project_id = ? AND user_id = ?", (project_id, user_id)
+        )
+
+    def editor_count(self, project_id: str) -> int:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM project_editor WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+
+    def is_member(self, project_id: str, user_id: str) -> bool:
+        return (
+            self.one(
+                "SELECT 1 FROM project_member WHERE project_id = ? AND user_id = ?", (project_id, user_id)
+            )
+            is not None
+        )
+
+    def members(self, project_id: str) -> list[dict]:
+        return self.all(
+            "SELECT m.user_id, m.display_name, e.user_id IS NOT NULL AS is_editor"
+            " FROM project_member m LEFT JOIN project_editor e"
+            " ON e.project_id = m.project_id AND e.user_id = m.user_id"
+            " WHERE m.project_id = ? ORDER BY m.rowid",
+            (project_id,),
         )
 
     def get_assignment(self, assignment_id: str) -> dict | None:
