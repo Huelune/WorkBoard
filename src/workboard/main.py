@@ -9,7 +9,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="WorkBoard project foundation")
     parser.add_argument("--version", action="version", version=f"WorkBoard {__version__}")
     parser.parse_args()
-    print("WorkBoard foundation is ready. UI and storage are not implemented yet.")
+    print("WorkBoard domain, local storage and services are ready. The UI is not implemented yet.")
     return 0
 
 
