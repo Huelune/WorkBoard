@@ -17,7 +17,7 @@ Service가 같은 로컬 트랜잭션에 업무 변경과 전송 대기 기록�
 | ui | 표, 상세 편집, 현황, 가져오기 미리보기 | SQLite 직접 쓰기 |
 | import_export | 엑셀 매핑·검사·미리보기, CSV 생성 | 검증 없이 대량 적용 |
 
-현재 패키지에 없는 import_export 디렉터리는 해당 단계를 구현할 때 추가한다. domain, storage, services는 1단계에서 구현했고 세부 결정은 docs/superpowers/specs/2026-11-18-stage1-domain-storage-design.md에 있다. 실행 진입점은 workboard 명령이다. 설정 예시는 config.example.toml에 두고 실제 경로·인증 정보는 로컬 설정으로만 관리한다.
+import_export는 엑셀 표를 업무 후보로 바꾸고(table), 설치된 엑셀로 파일을 읽는다(excel). 판정과 적용은 Service가 한다. domain, storage, services는 1단계에서 구현했고 세부 결정은 docs/superpowers/specs/2026-11-18-stage1-domain-storage-design.md에 있다. 실행 진입점은 workboard 명령이다. 설정 예시는 config.example.toml에 두고 실제 경로·인증 정보는 로컬 설정으로만 관리한다.
 
 ## 개념 데이터 모델
 

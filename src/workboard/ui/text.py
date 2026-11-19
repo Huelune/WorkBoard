@@ -12,6 +12,26 @@ STATUS = {"not_started": "미시작", "in_progress": "진행 중", "on_hold": "�
 REVIEW = {"pending": "확인 대기", "confirmed": "확인됨", "rejected": "반려됨"}
 RESULT = {"pass": "통과", "fail": "실패", "na": "해당 없음"}
 DECISION = {"confirmed": "확인", "rejected": "반려"}
+IMPORT_VERDICTS = {"new": "새로 등록", "duplicate": "이미 있음", "error": "오류", "blank": "빈 줄"}
+IMPORT_REASONS = {
+    "no_scope": "첫째 분류 칸이 비어 있음",
+    "no_category": "둘째 분류 칸이 비어 있음",
+    "no_assignee": "담당자가 비어 있음",
+    "unknown_assignee": "구성원 목록에 없는 담당자. 관리 화면에서 구성원의 ID나 표시 이름을 맞춰 주세요",
+    "ambiguous_assignee": "같은 표시 이름의 구성원이 여럿. 엑셀에 ID를 적거나 표시 이름을 다르게 해 주세요",
+    "deleted_scope": "삭제된 항목과 같은 이름(첫째 분류 칸)",
+    "deleted_category": "삭제된 항목과 같은 이름(둘째 분류 칸)",
+    "bad_due_date": "기한을 날짜로 읽을 수 없음",
+    "bad_link": "링크가 http:// 또는 https://로 시작하지 않음",
+}
+EXCEL_ERRORS = {
+    "not_installed": "이 PC에서 엑셀을 실행하지 못했습니다. 엑셀에서 칸을 복사한 뒤 '복사한 칸 붙여 넣기'를 써 보세요.",
+    "cannot_open": (
+        "엑셀이 파일을 열지 못했습니다. 엑셀에 떠 있는 안내 창이 있으면 닫고, 엑셀에서 그 파일이 직접 열리는지 "
+        "확인한 뒤 다시 시도하세요. 계속 안 되면 칸을 복사해 '복사한 칸 붙여 넣기'를 쓰세요."
+    ),
+    "no_sheets": "읽을 시트가 없습니다.",
+}
 DEFAULT_LABELS = ("대상 버전", "업무 분야")
 
 

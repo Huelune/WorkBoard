@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from support import Clock, temp_db_path
-from workboard.config import load_settings
+from workboard.config import demo_settings, load_settings
 from workboard.domain import is_overdue
 from workboard.services import WorkBoardService
 from workboard.storage import open_database
@@ -58,6 +58,13 @@ class SettingsTests(unittest.TestCase):
             path = Path(folder) / "config.toml"
             path.write_text("[user]\nid = 'kim'\n", encoding="utf-8-sig")
             self.assertEqual(load_settings(path, home=Path("H")).user_id, "kim")
+
+    def test_demo_settings_use_a_private_folder_apart_from_the_real_database(self) -> None:
+        settings = demo_settings()
+        self.assertEqual(settings.user_id, "tester")
+        self.assertEqual(settings.db_path, Path.home() / ".workboard" / "demo" / "demo.db")
+        self.assertNotEqual(settings.db_path, load_settings(Path("does-not-exist.toml")).db_path)
+        self.assertNotIn(Path(tempfile.gettempdir()), settings.db_path.parents)  # not a shared temp folder
 
     def test_blank_values_fall_back(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

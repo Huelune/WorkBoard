@@ -145,6 +145,13 @@ CREATE TABLE account (
     created_at TEXT NOT NULL
 );
 """,
+    # 6: which sheet heading feeds which field, remembered per project on this PC only (never shared).
+    """
+CREATE TABLE import_mapping (
+    project_id TEXT PRIMARY KEY REFERENCES project(id),
+    mapping TEXT NOT NULL
+);
+""",
 ]
 
 

@@ -19,6 +19,20 @@ def default_config_path() -> Path:
     return Path(override) if override else Path.home() / ".workboard" / "config.toml"
 
 
+def demo_settings() -> Settings:
+    """A separate practice database and a made-up login name.
+
+    For trying the app by hand (`workboard --demo`): the real database is not touched, and a
+    screenshot shows no real account. It needs no environment variable or config file, so the
+    command is the same in any shell.
+
+    It lives under the user's own home folder, not the temp folder: the data must survive
+    closing and reopening the app, and a temp folder can be shared with other users, who
+    could put a file at a known path there first.
+    """
+    return Settings(db_path=Path.home() / ".workboard" / "demo" / "demo.db", user_id="tester")
+
+
 def load_settings(path: Path | None = None, *, home: Path | None = None) -> Settings:
     """Read the settings file; anything missing or blank falls back to a per-user default.
 

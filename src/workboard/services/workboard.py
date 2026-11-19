@@ -7,6 +7,7 @@ a write only marks its snapshot as needing publication (sync_outbox).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -28,11 +29,14 @@ from workboard.domain import (
     clean_text,
     history_hash,
     is_overdue,
+    is_web_link,
     review_state,
     validate_due_date,
     validate_progress,
 )
 from workboard.domain.passwords import DUMMY_HASH, hash_password, validate_new_password, verify_password
+from workboard.import_export.table import FIELDS as IMPORT_FIELDS
+from workboard.import_export.table import normalize_due
 from workboard.storage import Repository
 from workboard.storage.database import APPEND_ONLY_TABLES
 
@@ -314,6 +318,187 @@ class WorkBoardService:
                 raise ValidationError("a project needs at least one editor")
             self._repo.remove_editor(project_id, user_id)
             self._repo.mark_dirty("definition", project_id, "", self._now())
+
+    # ----- import from a spreadsheet (project editors)
+
+    def _plan_import(self, actor: str, project_id: str, rows: list[dict]) -> list[dict]:
+        """Judge every sheet row without writing: new, duplicate, error (with a reason) or blank.
+
+        A row is the same work as an existing one when version, field and assignee match and the
+        reference ID matches (or, with no reference ID on the row, the title). Rows judged `new`
+        carry the cleaned values to register under `data`.
+        """
+        self._require_editor(actor, project_id)
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise ValidationError("import rows must be a list of rows")
+
+        def fold(value: object) -> str:
+            return value.strip().casefold() if isinstance(value, str) else ""
+
+        people: dict[str, set[str]] = {}
+        for member in self._repo.members(project_id):
+            for known in {member["user_id"], member["display_name"]}:
+                if fold(known):
+                    people.setdefault(fold(known), set()).add(member["user_id"])
+        items: dict[str, dict[str, dict]] = {"scope": {}, "category": {}}
+        names: dict[str, str] = {}
+        for kind in items:
+            # A live item wins over a retired one of the same name.
+            for record in sorted(self._repo.listing(kind, project_id), key=lambda r: -r["deleted"]):
+                items[kind][fold(record["name"])] = record
+                names[record["id"]] = fold(record["name"])
+        seen: set[tuple] = set()
+        for existing in self._repo.assignment_rows(project_id=project_id):
+            base = (names.get(existing["scope_id"]), names.get(existing["category_id"]), existing["assignee_id"])
+            seen.add((*base, "title", fold(existing["title"])))
+            if fold(existing["external_ref"]):
+                seen.add((*base, "ref", fold(existing["external_ref"])))
+
+        planned = []
+        for row in rows:
+            text = {field: row[field].strip() if isinstance(row.get(field), str) else "" for field in IMPORT_FIELDS}
+            entry: dict = {"line": row.get("line"), "title": text["title"], "verdict": "new", "reason": None}
+            planned.append(entry)
+            if not text["title"]:
+                entry["verdict"] = "blank"
+                continue
+            owners = people.get(fold(text["assignee"]), set())
+            due_date = None
+            if not text["scope"]:
+                reason = "no_scope"
+            elif not text["category"]:
+                reason = "no_category"
+            elif not text["assignee"]:
+                reason = "no_assignee"
+            elif not owners:
+                reason = "unknown_assignee"
+            elif len(owners) > 1:
+                reason = "ambiguous_assignee"
+            elif items["scope"].get(fold(text["scope"]), {}).get("deleted"):
+                reason = "deleted_scope"
+            elif items["category"].get(fold(text["category"]), {}).get("deleted"):
+                reason = "deleted_category"
+            elif text["external_url"] and not is_web_link(text["external_url"]):
+                reason = "bad_link"
+            else:
+                reason = None
+                try:
+                    due_date = normalize_due(text["due_date"])
+                except ValueError:
+                    reason = "bad_due_date"
+            if reason:
+                entry.update(verdict="error", reason=reason)
+                continue
+            (assignee_id,) = owners
+            base = (fold(text["scope"]), fold(text["category"]), assignee_id)
+            by_title = (*base, "title", fold(text["title"]))
+            key = (*base, "ref", fold(text["external_ref"])) if text["external_ref"] else by_title
+            if key in seen:
+                entry["verdict"] = "duplicate"
+                continue
+            seen.update((key, by_title))
+            entry["data"] = {**text, "assignee_id": assignee_id, "due_date": due_date}
+        return planned
+
+    @staticmethod
+    def _import_summary(planned: list[dict], known: dict[str, set[str]]) -> dict:
+        counts = {"read": len(planned), "new": 0, "duplicate": 0, "error": 0, "blank": 0}
+        fresh: dict[str, list[str]] = {"scope": [], "category": []}
+        for entry in planned:
+            counts[entry["verdict"]] += 1
+            for kind in fresh if entry["verdict"] == "new" else ():
+                name = entry["data"][kind]
+                if name.casefold() not in known[kind]:
+                    known[kind].add(name.casefold())
+                    fresh[kind].append(name)
+        return {
+            "rows": [{key: value for key, value in entry.items() if key != "data"} for entry in planned],
+            "counts": counts,
+            "new_scopes": fresh["scope"],
+            "new_categories": fresh["category"],
+        }
+
+    def _known_items(self, project_id: str) -> dict[str, set[str]]:
+        return {
+            kind: {record["name"].strip().casefold() for record in self._repo.listing(kind, project_id, live_only=True)}
+            for kind in ("scope", "category")
+        }
+
+    def plan_import(self, actor: str, project_id: str, rows: list[dict]) -> dict:
+        """Preview an import. Nothing is saved. The four verdict counts always add up to `read`."""
+        planned = self._plan_import(actor, project_id, rows)
+        return self._import_summary(planned, self._known_items(project_id))
+
+    def apply_import(self, actor: str, project_id: str, rows: list[dict]) -> dict:
+        """Register every row judged `new`, creating the version and field items they name.
+
+        One transaction, judged again inside it, so the result matches what is in the database
+        at that moment even if something changed after the preview.
+        """
+        with self._write():
+            planned = self._plan_import(actor, project_id, rows)
+            summary = self._import_summary(planned, self._known_items(project_id))
+            now = self._now()
+            ids: dict[str, dict[str, str]] = {
+                kind: {r["name"].strip().casefold(): r["id"] for r in self._repo.listing(kind, project_id, live_only=True)}
+                for kind in ("scope", "category")
+            }
+            for name in summary["new_scopes"]:
+                ids["scope"][name.casefold()] = str(uuid4())
+                self._repo.insert("scope", id=ids["scope"][name.casefold()], project_id=project_id, name=name, kind="")
+            for name in summary["new_categories"]:
+                ids["category"][name.casefold()] = str(uuid4())
+                self._repo.insert(
+                    "category",
+                    id=ids["category"][name.casefold()],
+                    project_id=project_id,
+                    name=name,
+                    position=len(ids["category"]),
+                )
+            for entry in planned:
+                if entry["verdict"] != "new":
+                    continue
+                data = entry["data"]
+                work_item_id = WorkItemId.new().value
+                self._repo.insert(
+                    "work_item",
+                    id=work_item_id,
+                    project_id=project_id,
+                    title=data["title"],
+                    scope_id=ids["scope"][data["scope"].casefold()],
+                    category_id=ids["category"][data["category"].casefold()],
+                    external_ref=data["external_ref"] or None,
+                    external_url=data["external_url"] or None,
+                    created_by=actor,
+                )
+                self._repo.insert(
+                    "assignment",
+                    id=str(uuid4()),
+                    work_item_id=work_item_id,
+                    assignee_id=data["assignee_id"],
+                    due_date=data["due_date"],
+                    created_at=now,
+                )
+            if summary["counts"]["new"]:
+                self._repo.mark_dirty("definition", project_id, "", now)
+            return summary
+
+    def get_import_mapping(self, project_id: str) -> dict[str, str]:
+        """Which sheet heading the editor matched to each field last time, on this PC."""
+        self._get("project", project_id)
+        try:
+            saved = json.loads(self._repo.import_mapping(project_id) or "{}")
+        except ValueError:
+            return {}
+        return {field: saved[field] for field in IMPORT_FIELDS if isinstance(saved.get(field), str)}
+
+    def save_import_mapping(self, actor: str, project_id: str, mapping: dict[str, str]) -> None:
+        if not isinstance(mapping, dict):
+            raise ValidationError("mapping must be a dictionary")
+        kept = {field: mapping[field] for field in IMPORT_FIELDS if isinstance(mapping.get(field), str)}
+        with self._write():
+            self._require_editor(actor, project_id)
+            self._repo.save_import_mapping(project_id, json.dumps(kept, ensure_ascii=False))
 
     def set_labels(self, actor: str, project_id: str, scope_label: str, category_label: str) -> None:
         """Rename the project's two grouping fields, e.g. 코드 버전 and 검증 분야."""
